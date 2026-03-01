@@ -152,12 +152,15 @@ impl canvas::Program<Message> for &OrderBookCanvas {
                     t::ask_heatmap(intensity),
                 );
 
-                // Always show volume text for asks
+                // Volume text for asks — left-aligned right of price column
                 let vol_text = Text {
                     content: format_volume(level.amount),
-                    position: Point::new(bar_x + 4.0, y + row_h / 2.0),
+                    position: Point::new(
+                        half_width + price_label_width / 2.0 + 4.0,
+                        y + row_h / 2.0,
+                    ),
                     color: t::TEXT_PRIMARY,
-                    size: (row_h * 0.55).max(9.0).into(),
+                    size: (row_h * 0.5).max(8.0).min(12.0).into(),
                     align_y: iced::alignment::Vertical::Center,
                     ..Text::default()
                 };
@@ -167,7 +170,7 @@ impl canvas::Program<Message> for &OrderBookCanvas {
                     content: format_price(level.price),
                     position: Point::new(half_width, y + row_h / 2.0),
                     color: t::ASK_RED,
-                    size: (row_h * 0.65).max(10.0).into(),
+                    size: (row_h * 0.5).max(9.0).min(12.0).into(),
                     align_x: iced::alignment::Horizontal::Center.into(),
                     align_y: iced::alignment::Vertical::Center,
                     ..Text::default()
@@ -198,13 +201,16 @@ impl canvas::Program<Message> for &OrderBookCanvas {
                     t::bid_heatmap(intensity),
                 );
 
-                // Always show volume text for bids (right-aligned before price)
-                let vol_text_x = half_width - price_label_width / 2.0 - bar_width.max(4.0) + 4.0;
+                // Volume text for bids — right-aligned left of price column
                 let vol_text = Text {
                     content: format_volume(level.amount),
-                    position: Point::new(vol_text_x, y + row_h / 2.0),
+                    position: Point::new(
+                        half_width - price_label_width / 2.0 - 4.0,
+                        y + row_h / 2.0,
+                    ),
                     color: t::TEXT_PRIMARY,
-                    size: (row_h * 0.55).max(9.0).into(),
+                    size: (row_h * 0.5).max(8.0).min(12.0).into(),
+                    align_x: iced::alignment::Horizontal::Right.into(),
                     align_y: iced::alignment::Vertical::Center,
                     ..Text::default()
                 };
@@ -214,7 +220,7 @@ impl canvas::Program<Message> for &OrderBookCanvas {
                     content: format_price(level.price),
                     position: Point::new(half_width, y + row_h / 2.0),
                     color: t::BID_GREEN,
-                    size: (row_h * 0.65).max(10.0).into(),
+                    size: (row_h * 0.5).max(9.0).min(12.0).into(),
                     align_x: iced::alignment::Horizontal::Center.into(),
                     align_y: iced::alignment::Vertical::Center,
                     ..Text::default()
