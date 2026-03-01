@@ -1,12 +1,18 @@
-use iced::widget::{button, column, container, row, text, Row};
+use std::collections::HashMap;
+
+use iced::event::Event;
+use iced::mouse;
+use iced::widget::{column, container, row, text, Row};
 use iced::{Color, Element, Length, Subscription};
 
-use crate::message::{Message, Side};
+use crate::message::{Message, PanelId, Side};
 use crate::panel::order::OrderPanel;
 use crate::panel::pnl::StubPnL;
 use crate::panel::position::{PositionSide, StubPosition};
 use crate::price_axis::{FollowMode, PriceAxis};
+use crate::settings::Settings;
 use crate::theme as t;
+use crate::widget::bubble_chart_canvas::BubbleChartCanvas;
 use crate::widget::cluster_canvas::ClusterCanvas;
 use crate::widget::orderbook_canvas::OrderBookCanvas;
 use crate::widget::tape::Tape;
@@ -25,6 +31,7 @@ pub struct App {
     orderbook_canvas: OrderBookCanvas,
     cluster_canvas: ClusterCanvas,
     tick_chart_canvas: TickChartCanvas,
+    bubble_chart_canvas: BubbleChartCanvas,
     tape: Tape,
 
     // Stub panels
@@ -37,16 +44,59 @@ pub struct App {
     last_price: f64,
     message_count: u64,
 
-    // Panel visibility (Ctrl+1..4)
-    show_tick_chart: bool,
-    show_cluster_chart: bool,
-    show_orderbook: bool,
-    show_tape: bool,
+    // Panel order and visibility
+    panel_order: Vec<PanelId>,
+    panel_visible: HashMap<PanelId, bool>,
+
+    // Drag/drop state (button reordering)
+    dragging: Option<PanelId>,
+    drag_did_move: bool,
+
+    // Panel resize state (draggable dividers)
+    panel_widths: HashMap<PanelId, u16>,
+    resizing_divider: Option<usize>,  // index of divider being dragged
+    resize_start_x: f32,
+    resize_px_per_unit: f32,          // calculated on first move for 1:1 tracking
+    resize_start_widths: Vec<(PanelId, u16)>,
 }
 
 impl App {
     pub fn new(ws_url: String, symbol: String, price_step: f64) -> (Self, iced::Task<Message>) {
         let price_axis = PriceAxis::new(price_step);
+
+        // Defaults
+        let mut panel_order = PanelId::default_order();
+        let mut panel_visible = HashMap::from([
+            (PanelId::ClusterChart, true),
+            (PanelId::TickChart, false),
+            (PanelId::BubbleChart, true),
+            (PanelId::OrderBook, true),
+            (PanelId::Tape, false),
+            (PanelId::BottomBar, false),
+        ]);
+        let mut panel_widths = HashMap::from([
+            (PanelId::ClusterChart, 20),
+            (PanelId::TickChart, 15),
+            (PanelId::BubbleChart, 15),
+            (PanelId::OrderBook, 30),
+            (PanelId::Tape, 20),
+        ]);
+
+        // Override from saved settings
+        if let Some(saved) = Settings::load() {
+            let loaded_order = saved.to_panel_order();
+            if !loaded_order.is_empty() {
+                panel_order = loaded_order;
+            }
+            let loaded_vis = saved.to_panel_visible();
+            if !loaded_vis.is_empty() {
+                panel_visible = loaded_vis;
+            }
+            let loaded_widths = saved.to_panel_widths();
+            if !loaded_widths.is_empty() {
+                panel_widths = loaded_widths;
+            }
+        }
 
         let app = Self {
             ws_url,
@@ -55,6 +105,7 @@ impl App {
             orderbook_canvas: OrderBookCanvas::new(price_axis.clone()),
             cluster_canvas: ClusterCanvas::new(price_axis.clone()),
             tick_chart_canvas: TickChartCanvas::new(price_axis.clone()),
+            bubble_chart_canvas: BubbleChartCanvas::new(price_axis.clone()),
             tape: Tape::new(),
             position: StubPosition::default(),
             order_panel: OrderPanel::default(),
@@ -62,10 +113,15 @@ impl App {
             ws_connected: false,
             last_price: 0.0,
             message_count: 0,
-            show_tick_chart: true,
-            show_cluster_chart: true,
-            show_orderbook: true,
-            show_tape: true,
+            panel_order,
+            panel_visible,
+            dragging: None,
+            drag_did_move: false,
+            panel_widths,
+            resizing_divider: None,
+            resize_start_x: 0.0,
+            resize_px_per_unit: 10.0,
+            resize_start_widths: Vec::new(),
         };
 
         (app, iced::Task::none())
@@ -116,6 +172,8 @@ impl App {
                     if let Some(ticks) = msg.ticks {
                         self.tick_chart_canvas.update_data(ticks.clone());
                         self.tick_chart_canvas.update_price_axis(&self.price_axis);
+                        self.bubble_chart_canvas.update_data(ticks.clone());
+                        self.bubble_chart_canvas.update_price_axis(&self.price_axis);
                         self.tape.update_ticks(ticks);
                     }
                 }
@@ -137,6 +195,7 @@ impl App {
                 self.orderbook_canvas.update_price_axis(&self.price_axis);
                 self.cluster_canvas.update_price_axis(&self.price_axis);
                 self.tick_chart_canvas.update_price_axis(&self.price_axis);
+                self.bubble_chart_canvas.update_price_axis(&self.price_axis);
             }
 
             Message::Zoom(delta) => {
@@ -144,6 +203,7 @@ impl App {
                 self.orderbook_canvas.update_price_axis(&self.price_axis);
                 self.cluster_canvas.update_price_axis(&self.price_axis);
                 self.tick_chart_canvas.update_price_axis(&self.price_axis);
+                self.bubble_chart_canvas.update_price_axis(&self.price_axis);
             }
 
             Message::SnapToPrice => {
@@ -151,6 +211,7 @@ impl App {
                 self.orderbook_canvas.update_price_axis(&self.price_axis);
                 self.cluster_canvas.update_price_axis(&self.price_axis);
                 self.tick_chart_canvas.update_price_axis(&self.price_axis);
+                self.bubble_chart_canvas.update_price_axis(&self.price_axis);
             }
 
             Message::ToggleFollowMode => {
@@ -158,6 +219,7 @@ impl App {
                 self.orderbook_canvas.update_price_axis(&self.price_axis);
                 self.cluster_canvas.update_price_axis(&self.price_axis);
                 self.tick_chart_canvas.update_price_axis(&self.price_axis);
+                self.bubble_chart_canvas.update_price_axis(&self.price_axis);
                 println!(
                     "[UI] Follow mode: {:?}",
                     self.price_axis.follow_mode
@@ -194,21 +256,117 @@ impl App {
                 self.order_panel.quantity = qty;
             }
 
-            Message::ToggleTickChart => {
-                self.show_tick_chart = !self.show_tick_chart;
+            Message::TogglePanel(panel_id) => {
+                let visible = self.panel_visible.entry(panel_id).or_insert(true);
+                *visible = !*visible;
+                self.save_settings();
             }
-            Message::ToggleClusterChart => {
-                self.show_cluster_chart = !self.show_cluster_chart;
+
+            Message::DragStart(panel_id) => {
+                self.dragging = Some(panel_id);
+                self.drag_did_move = false;
             }
-            Message::ToggleOrderBook => {
-                self.show_orderbook = !self.show_orderbook;
+            Message::DragOver(target) => {
+                // Live reorder: as cursor enters another button while dragging,
+                // immediately shift the dragged item to that position (like dnd-kit)
+                if let Some(dragged) = self.dragging {
+                    if dragged != target {
+                        let from = self.panel_order.iter().position(|&p| p == dragged);
+                        let to = self.panel_order.iter().position(|&p| p == target);
+                        if let (Some(from_idx), Some(to_idx)) = (from, to) {
+                            // Remove from old position and insert at new position
+                            let item = self.panel_order.remove(from_idx);
+                            self.panel_order.insert(to_idx, item);
+                            self.drag_did_move = true;
+                        }
+                    }
+                }
             }
-            Message::ToggleTape => {
-                self.show_tape = !self.show_tape;
+            Message::DragEnd => {
+                if let Some(dragged) = self.dragging {
+                    if !self.drag_did_move {
+                        let visible = self.panel_visible.entry(dragged).or_insert(true);
+                        *visible = !*visible;
+                    }
+                }
+                let did_change = self.dragging.is_some();
+                self.dragging = None;
+                self.drag_did_move = false;
+                if did_change {
+                    self.save_settings();
+                }
+            }
+
+            Message::ResizeStart { divider_index, x } => {
+                // Snapshot current visible panels + widths so we can calculate delta
+                let visible: Vec<(PanelId, u16)> = self
+                    .panel_order
+                    .iter()
+                    .filter(|p| p.is_main_panel() && self.panel_visible.get(p).copied().unwrap_or(true))
+                    .map(|&p| (p, *self.panel_widths.get(&p).unwrap_or(&20)))
+                    .collect();
+                self.resizing_divider = Some(divider_index);
+                self.resize_start_x = x;
+                self.resize_start_widths = visible;
+            }
+            Message::ResizeMove(x) => {
+                if let Some(div_idx) = self.resizing_divider {
+                    // On first move: capture start_x and compute pixels-per-unit
+                    if self.resize_start_x == 0.0 {
+                        self.resize_start_x = x;
+                        // Estimate: divider is at x pixels from left edge
+                        // In unit space, divider is at left_sum units out of total
+                        let left_sum: f32 = self.resize_start_widths[..=div_idx]
+                            .iter()
+                            .map(|(_, w)| *w as f32)
+                            .sum();
+                        if left_sum > 0.1 {
+                            // x ≈ left_sum * px_per_unit → px_per_unit ≈ x / left_sum
+                            self.resize_px_per_unit = x / left_sum;
+                        }
+                        return;
+                    }
+
+                    let delta_px = x - self.resize_start_x;
+                    let delta_units = (delta_px / self.resize_px_per_unit).round() as i32;
+
+                    if div_idx < self.resize_start_widths.len()
+                        && div_idx + 1 < self.resize_start_widths.len()
+                    {
+                        let (left_id, left_w) = self.resize_start_widths[div_idx];
+                        let (right_id, right_w) = self.resize_start_widths[div_idx + 1];
+
+                        let pair_total = left_w + right_w;
+                        let new_left = ((left_w as i32 + delta_units).max(5) as u16).min(pair_total - 5);
+                        let new_right = pair_total - new_left;
+
+                        self.panel_widths.insert(left_id, new_left);
+                        self.panel_widths.insert(right_id, new_right);
+                    }
+                }
+            }
+            Message::ResizeEnd => {
+                if self.resizing_divider.is_some() {
+                    self.resizing_divider = None;
+                    self.save_settings();
+                }
             }
 
             Message::NoOp => {}
         }
+    }
+
+    fn save_settings(&self) {
+        Settings::save(&self.panel_order, &self.panel_visible, &self.panel_widths);
+    }
+
+    /// Returns visible main panels in display order.
+    fn visible_main_panels(&self) -> Vec<PanelId> {
+        self.panel_order
+            .iter()
+            .filter(|p| p.is_main_panel() && self.panel_visible.get(p).copied().unwrap_or(true))
+            .copied()
+            .collect()
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -225,26 +383,44 @@ impl App {
             FollowMode::Manual => text("MANUAL").size(11).color(t::ASK_RED),
         };
 
-        let toggle_btn = |label: String, on: bool, msg: Message| -> Element<'_, Message> {
-            let (text_color, bg) = if on {
+        // Build toggle buttons in panel_order with drag/drop via mouse_area
+        // Like dnd-kit: press → grab, drag over → items shift live, release → finalize
+        let mut toggle_buttons = Row::new().spacing(2);
+        for &panel_id in &self.panel_order {
+            let on = *self.panel_visible.get(&panel_id).unwrap_or(&true);
+            let is_dragged = self.dragging == Some(panel_id);
+
+            let (text_color, bg) = if is_dragged {
+                (t::TEXT_BRIGHT, Color::from_rgba(0.4, 0.7, 1.0, 0.5))
+            } else if on {
                 (t::TEXT_BRIGHT, Color::from_rgba(1.0, 1.0, 1.0, 0.15))
             } else {
                 (t::TEXT_DIM, Color::from_rgba(1.0, 1.0, 1.0, 0.04))
             };
-            button(text(label).size(10).color(text_color))
-                .on_press(msg)
-                .padding([2, 6])
-                .style(move |_theme: &_, _status| button::Style {
-                    background: Some(bg.into()),
-                    text_color,
-                    border: iced::Border {
-                        radius: 3.0.into(),
-                        ..Default::default()
-                    },
+
+            let label = panel_id.label().to_string();
+            let btn: Element<'_, Message> = container(
+                text(label).size(10).color(text_color),
+            )
+            .padding([2, 6])
+            .style(move |_theme: &_| container::Style {
+                background: Some(iced::Background::Color(bg)),
+                border: iced::Border {
+                    radius: 3.0.into(),
                     ..Default::default()
-                })
-                .into()
-        };
+                },
+                ..Default::default()
+            })
+            .into();
+
+            let wrapped: Element<'_, Message> = iced::widget::mouse_area(btn)
+                .on_press(Message::DragStart(panel_id))
+                .on_release(Message::DragEnd)
+                .on_enter(Message::DragOver(panel_id))
+                .into();
+
+            toggle_buttons = toggle_buttons.push(wrapped);
+        }
 
         let status_bar = container(
             row![
@@ -260,11 +436,8 @@ impl App {
                 text(format!("  Msgs: {}  ", self.message_count))
                     .size(10)
                     .color(t::TEXT_DIM),
-                toggle_btn("Tick".into(), self.show_tick_chart, Message::ToggleTickChart),
-                toggle_btn("Clst".into(), self.show_cluster_chart, Message::ToggleClusterChart),
-                toggle_btn("OB".into(), self.show_orderbook, Message::ToggleOrderBook),
-                toggle_btn("Tape".into(), self.show_tape, Message::ToggleTape),
             ]
+            .push(toggle_buttons)
             .spacing(4)
             .align_y(iced::Alignment::Center)
             .padding(4),
@@ -275,49 +448,90 @@ impl App {
         })
         .width(Length::Fill);
 
-        // Main panels — only visible ones
-        let mut main_panels = Row::new().spacing(2).height(Length::Fill);
+        // Main panels — rendered in panel_order with draggable dividers
+        let visible_panels = self.visible_main_panels();
+        let mut main_panels = Row::new().spacing(0).height(Length::Fill);
 
-        if self.show_tick_chart {
-            main_panels = main_panels.push(
-                container(self.tick_chart_canvas.view())
-                    .width(Length::FillPortion(15))
-                    .height(Length::Fill),
-            );
-        }
-        if self.show_cluster_chart {
-            main_panels = main_panels.push(
-                container(self.cluster_canvas.view())
-                    .width(Length::FillPortion(20))
-                    .height(Length::Fill),
-            );
-        }
-        if self.show_orderbook {
-            main_panels = main_panels.push(
-                container(self.orderbook_canvas.view())
-                    .width(Length::FillPortion(40))
-                    .height(Length::Fill),
-            );
-        }
-        if self.show_tape {
-            main_panels = main_panels.push(
-                container(self.tape.view())
-                    .width(Length::FillPortion(25))
-                    .height(Length::Fill),
-            );
-        }
+        for (i, &panel_id) in visible_panels.iter().enumerate() {
+            // Add divider before each panel (except first)
+            if i > 0 {
+                let div_idx = i - 1;
+                let is_active = self.resizing_divider == Some(div_idx);
+                let divider_bg = if is_active {
+                    Color::from_rgba(0.4, 0.7, 1.0, 0.8)
+                } else {
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                };
+                let divider: Element<'_, Message> = iced::widget::mouse_area(
+                    container(text("").size(1))
+                        .width(Length::Fixed(4.0))
+                        .height(Length::Fill)
+                        .style(move |_theme: &_| container::Style {
+                            background: Some(iced::Background::Color(divider_bg)),
+                            ..Default::default()
+                        }),
+                )
+                .on_press(Message::ResizeStart { divider_index: div_idx, x: 0.0 })
+                .on_release(Message::ResizeEnd)
+                .interaction(mouse::Interaction::ResizingHorizontally)
+                .into();
 
-        // Bottom panels row
-        let bottom_panels = row![
-            crate::panel::position::view(&self.position),
-            crate::panel::order::view(&self.order_panel),
-            crate::panel::pnl::view(&self.pnl),
-        ]
-        .spacing(2)
-        .height(Length::Fixed(90.0));
+                main_panels = main_panels.push(divider);
+            }
+
+            let width = *self.panel_widths.get(&panel_id).unwrap_or(&20);
+            let panel_widget: Element<'_, Message> = match panel_id {
+                PanelId::TickChart => {
+                    container(self.tick_chart_canvas.view())
+                        .width(Length::FillPortion(width))
+                        .height(Length::Fill)
+                        .into()
+                }
+                PanelId::ClusterChart => {
+                    container(self.cluster_canvas.view())
+                        .width(Length::FillPortion(width))
+                        .height(Length::Fill)
+                        .into()
+                }
+                PanelId::BubbleChart => {
+                    container(self.bubble_chart_canvas.view())
+                        .width(Length::FillPortion(width))
+                        .height(Length::Fill)
+                        .into()
+                }
+                PanelId::OrderBook => {
+                    container(self.orderbook_canvas.view())
+                        .width(Length::FillPortion(width))
+                        .height(Length::Fill)
+                        .into()
+                }
+                PanelId::Tape => {
+                    container(self.tape.view())
+                        .width(Length::FillPortion(width))
+                        .height(Length::Fill)
+                        .into()
+                }
+                PanelId::BottomBar => continue,
+            };
+
+            main_panels = main_panels.push(panel_widget);
+        }
 
         // Full layout
-        let content = column![status_bar, main_panels, bottom_panels].spacing(2);
+        let mut content = column![status_bar, main_panels].spacing(2);
+
+        // Bottom panels row — only if BottomBar is visible
+        if self.panel_visible.get(&PanelId::BottomBar).copied().unwrap_or(true) {
+            let bottom_panels = row![
+                crate::panel::position::view(&self.position),
+                crate::panel::order::view(&self.order_panel),
+                crate::panel::pnl::view(&self.pnl),
+            ]
+            .spacing(2)
+            .height(Length::Fixed(90.0));
+
+            content = content.push(bottom_panels);
+        }
 
         container(content)
             .style(|_theme: &_| container::Style {
@@ -331,9 +545,26 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch([
+        let mut subs = vec![
             ws::client::connect(self.ws_url.clone()).map(Message::WsEvent),
             crate::hotkeys::hotkey_subscription(),
-        ])
+        ];
+
+        // While resizing, listen for global mouse events
+        if self.resizing_divider.is_some() {
+            subs.push(
+                iced::event::listen_with(|event, _status, _id| match event {
+                    Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                        Some(Message::ResizeMove(position.x))
+                    }
+                    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                        Some(Message::ResizeEnd)
+                    }
+                    _ => None,
+                }),
+            );
+        }
+
+        Subscription::batch(subs)
     }
 }

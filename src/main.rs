@@ -4,6 +4,7 @@ mod message;
 mod model;
 mod panel;
 mod price_axis;
+mod settings;
 mod theme;
 mod widget;
 mod ws;
