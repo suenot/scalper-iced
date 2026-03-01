@@ -111,7 +111,7 @@ impl canvas::Program<Message> for &OrderBookCanvas {
             // Background
             frame.fill_rectangle(Point::ORIGIN, size, t::PANEL_BG);
 
-            let Some(ob) = &self.orderbook else {
+            let Some(raw_ob) = &self.orderbook else {
                 let text = Text {
                     content: "Waiting for data...".to_string(),
                     position: Point::new(size.width / 2.0, size.height / 2.0),
@@ -123,6 +123,15 @@ impl canvas::Program<Message> for &OrderBookCanvas {
                 };
                 frame.fill_text(text);
                 return;
+            };
+
+            // Aggregate price levels when display_step > tick_size
+            let step = self.price_axis.display_step;
+            let tick = self.price_axis.tick_size;
+            let ob = if step > tick * 1.5 {
+                raw_ob.aggregated(step)
+            } else {
+                raw_ob.clone()
             };
 
             let max_vol = ob.max_volume().max(0.001);

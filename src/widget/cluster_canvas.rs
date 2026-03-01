@@ -73,15 +73,29 @@ impl canvas::Program<Message> for &ClusterCanvas {
             let candle_width = (size.width / num_candles.max(1) as f32).min(80.0);
             let row_h = self.price_axis.row_height;
 
-            let global_max_vol = self
-                .candles
+            // Aggregate cluster points when display_step > tick_size
+            let step = self.price_axis.display_step;
+            let tick = self.price_axis.tick_size;
+            let need_agg = step > tick * 1.5;
+            let agg_candles: Vec<_> = if need_agg {
+                self.candles.iter().map(|c| c.aggregated(step)).collect()
+            } else {
+                Vec::new()
+            };
+            let candles_ref: &[crate::model::ClusterCandle] = if need_agg {
+                &agg_candles
+            } else {
+                &self.candles
+            };
+
+            let global_max_vol = candles_ref
                 .iter()
                 .flat_map(|c| c.cluster_points.iter())
                 .map(|p| p.volume)
                 .fold(0.0_f64, f64::max)
                 .max(0.001);
 
-            for (i, candle) in self.candles.iter().enumerate() {
+            for (i, candle) in candles_ref.iter().enumerate() {
                 let x = size.width - (num_candles - i) as f32 * candle_width;
 
                 for point in &candle.cluster_points {
