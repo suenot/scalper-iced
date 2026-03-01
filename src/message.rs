@@ -27,6 +27,10 @@ pub enum Message {
     // UI
     ToggleFollowMode,
     VolumeFilterChanged(f64),
+    ToggleTickChart,
+    ToggleClusterChart,
+    ToggleOrderBook,
+    ToggleTape,
 
     // Order panel
     QuantityChanged(String),

@@ -69,36 +69,11 @@ impl canvas::Program<Message> for &TickChartCanvas {
                 return;
             }
 
-            // Compute local price range from candle data for auto-scaling
-            let mut price_min = f64::MAX;
-            let mut price_max = f64::MIN;
-            for candle in &self.candles {
-                if candle.low < price_min {
-                    price_min = candle.low;
-                }
-                if candle.high > price_max {
-                    price_max = candle.high;
-                }
-            }
-
-            // Add padding (10% on each side)
-            let range = (price_max - price_min).max(self.price_axis.display_step * 2.0);
-            let padding = range * 0.1;
-            price_min -= padding;
-            price_max += padding;
-            let total_range = price_max - price_min;
-
-            // Reserve space for price labels on the right
+            // Use shared PriceAxis for Y mapping — keeps yellow line aligned
+            // with orderbook and cluster chart
             let label_width = 60.0_f32;
             let chart_width = size.width - label_width;
-            let chart_height = size.height - 20.0; // top margin
-            let top_margin = 10.0_f32;
-
-            // Local price-to-Y mapping (auto-scaled to fit data)
-            let local_price_to_y = |price: f64| -> f32 {
-                let ratio = (price_max - price) / total_range;
-                top_margin + ratio as f32 * chart_height
-            };
+            let row_h = self.price_axis.row_height;
 
             let num_candles = self.candles.len();
             let candle_width = (chart_width / num_candles.max(1) as f32).min(20.0).max(3.0);
@@ -109,10 +84,10 @@ impl canvas::Program<Message> for &TickChartCanvas {
                 let x = chart_width - (num_candles - i) as f32 * candle_width;
                 let center_x = x + candle_width / 2.0;
 
-                let open_y = local_price_to_y(candle.open);
-                let close_y = local_price_to_y(candle.close);
-                let high_y = local_price_to_y(candle.high);
-                let low_y = local_price_to_y(candle.low);
+                let open_y = self.price_axis.price_to_y(candle.open, size.height);
+                let close_y = self.price_axis.price_to_y(candle.close, size.height);
+                let high_y = self.price_axis.price_to_y(candle.high, size.height);
+                let low_y = self.price_axis.price_to_y(candle.low, size.height);
 
                 let color = if candle.is_bullish() {
                     t::BID_GREEN
@@ -130,7 +105,7 @@ impl canvas::Program<Message> for &TickChartCanvas {
                     Stroke::default().with_color(color).with_width(wick_width),
                 );
 
-                // Draw body
+                // Draw body (min 2px so thin candles are still visible)
                 let body_top = open_y.min(close_y);
                 let body_height = (open_y - close_y).abs().max(2.0);
                 frame.fill_rectangle(
@@ -140,12 +115,15 @@ impl canvas::Program<Message> for &TickChartCanvas {
                 );
             }
 
-            // Draw last price horizontal line
-            let last_y = local_price_to_y(self.price_axis.last_price);
-            if last_y > 0.0 && last_y < size.height {
+            // Last price line — offset by row_h/2 to match orderbook/cluster
+            let last_y = self
+                .price_axis
+                .price_to_y(self.price_axis.last_price, size.height);
+            let last_y_center = last_y + row_h / 2.0;
+            if last_y_center > 0.0 && last_y_center < size.height {
                 let line = Path::line(
-                    Point::new(0.0, last_y),
-                    Point::new(chart_width, last_y),
+                    Point::new(0.0, last_y_center),
+                    Point::new(chart_width, last_y_center),
                 );
                 frame.stroke(
                     &line,
@@ -155,12 +133,13 @@ impl canvas::Program<Message> for &TickChartCanvas {
                 );
             }
 
-            // Draw price scale labels on the right side
-            let num_labels = 6;
-            for i in 0..=num_labels {
-                let price = price_max - (total_range * i as f64 / num_labels as f64);
-                let y = local_price_to_y(price);
-                if y > 5.0 && y < size.height - 5.0 {
+            // Price scale labels on the right
+            let visible_rows = self.price_axis.visible_rows(size.height);
+            let step = (visible_rows / 8).max(1);
+            for row_offset in (-visible_rows / 2..=visible_rows / 2).step_by(step as usize) {
+                let y = size.height / 2.0 + row_offset as f32 * row_h;
+                let price = self.price_axis.y_to_price(y, size.height);
+                if y > 10.0 && y < size.height - 10.0 {
                     // Grid line
                     let grid = Path::line(
                         Point::new(0.0, y),
@@ -186,7 +165,7 @@ impl canvas::Program<Message> for &TickChartCanvas {
                 }
             }
 
-            // Separator line between chart and labels
+            // Separator line
             let sep = Path::line(
                 Point::new(chart_width, 0.0),
                 Point::new(chart_width, size.height),

@@ -1,11 +1,10 @@
-use iced::widget::{column, container, row, text};
-use iced::{Element, Length, Subscription};
+use iced::widget::{button, column, container, row, text, Row};
+use iced::{Color, Element, Length, Subscription};
 
 use crate::message::{Message, Side};
-// models imported via ws module
 use crate::panel::order::OrderPanel;
 use crate::panel::pnl::StubPnL;
-use crate::panel::position::{StubPosition, PositionSide};
+use crate::panel::position::{PositionSide, StubPosition};
 use crate::price_axis::{FollowMode, PriceAxis};
 use crate::theme as t;
 use crate::widget::cluster_canvas::ClusterCanvas;
@@ -37,6 +36,12 @@ pub struct App {
     ws_connected: bool,
     last_price: f64,
     message_count: u64,
+
+    // Panel visibility (Ctrl+1..4)
+    show_tick_chart: bool,
+    show_cluster_chart: bool,
+    show_orderbook: bool,
+    show_tape: bool,
 }
 
 impl App {
@@ -57,6 +62,10 @@ impl App {
             ws_connected: false,
             last_price: 0.0,
             message_count: 0,
+            show_tick_chart: true,
+            show_cluster_chart: true,
+            show_orderbook: true,
+            show_tape: true,
         };
 
         (app, iced::Task::none())
@@ -185,6 +194,19 @@ impl App {
                 self.order_panel.quantity = qty;
             }
 
+            Message::ToggleTickChart => {
+                self.show_tick_chart = !self.show_tick_chart;
+            }
+            Message::ToggleClusterChart => {
+                self.show_cluster_chart = !self.show_cluster_chart;
+            }
+            Message::ToggleOrderBook => {
+                self.show_orderbook = !self.show_orderbook;
+            }
+            Message::ToggleTape => {
+                self.show_tape = !self.show_tape;
+            }
+
             Message::NoOp => {}
         }
     }
@@ -203,6 +225,27 @@ impl App {
             FollowMode::Manual => text("MANUAL").size(11).color(t::ASK_RED),
         };
 
+        let toggle_btn = |label: String, on: bool, msg: Message| -> Element<'_, Message> {
+            let (text_color, bg) = if on {
+                (t::TEXT_BRIGHT, Color::from_rgba(1.0, 1.0, 1.0, 0.15))
+            } else {
+                (t::TEXT_DIM, Color::from_rgba(1.0, 1.0, 1.0, 0.04))
+            };
+            button(text(label).size(10).color(text_color))
+                .on_press(msg)
+                .padding([2, 6])
+                .style(move |_theme: &_, _status| button::Style {
+                    background: Some(bg.into()),
+                    text_color,
+                    border: iced::Border {
+                        radius: 3.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .into()
+        };
+
         let status_bar = container(
             row![
                 ws_indicator,
@@ -214,9 +257,13 @@ impl App {
                     .color(t::SPREAD_YELLOW),
                 text("  Mode: ").size(11).color(t::TEXT_DIM),
                 mode_text,
-                text(format!("  Msgs: {}", self.message_count))
+                text(format!("  Msgs: {}  ", self.message_count))
                     .size(10)
                     .color(t::TEXT_DIM),
+                toggle_btn("Tick".into(), self.show_tick_chart, Message::ToggleTickChart),
+                toggle_btn("Clst".into(), self.show_cluster_chart, Message::ToggleClusterChart),
+                toggle_btn("OB".into(), self.show_orderbook, Message::ToggleOrderBook),
+                toggle_btn("Tape".into(), self.show_tape, Message::ToggleTape),
             ]
             .spacing(4)
             .align_y(iced::Alignment::Center)
@@ -228,27 +275,37 @@ impl App {
         })
         .width(Length::Fill);
 
-        // Main panels row: Tick Chart | Cluster Chart | OrderBook | Tape
-        let main_panels = row![
-            // Tick chart (left, 15% width)
-            container(self.tick_chart_canvas.view())
-                .width(Length::FillPortion(15))
-                .height(Length::Fill),
-            // Cluster chart (20% width)
-            container(self.cluster_canvas.view())
-                .width(Length::FillPortion(20))
-                .height(Length::Fill),
-            // OrderBook (main, 40% width)
-            container(self.orderbook_canvas.view())
-                .width(Length::FillPortion(40))
-                .height(Length::Fill),
-            // Tape (right, 25% width)
-            container(self.tape.view())
-                .width(Length::FillPortion(25))
-                .height(Length::Fill),
-        ]
-        .spacing(2)
-        .height(Length::Fill);
+        // Main panels — only visible ones
+        let mut main_panels = Row::new().spacing(2).height(Length::Fill);
+
+        if self.show_tick_chart {
+            main_panels = main_panels.push(
+                container(self.tick_chart_canvas.view())
+                    .width(Length::FillPortion(15))
+                    .height(Length::Fill),
+            );
+        }
+        if self.show_cluster_chart {
+            main_panels = main_panels.push(
+                container(self.cluster_canvas.view())
+                    .width(Length::FillPortion(20))
+                    .height(Length::Fill),
+            );
+        }
+        if self.show_orderbook {
+            main_panels = main_panels.push(
+                container(self.orderbook_canvas.view())
+                    .width(Length::FillPortion(40))
+                    .height(Length::Fill),
+            );
+        }
+        if self.show_tape {
+            main_panels = main_panels.push(
+                container(self.tape.view())
+                    .width(Length::FillPortion(25))
+                    .height(Length::Fill),
+            );
+        }
 
         // Bottom panels row
         let bottom_panels = row![
