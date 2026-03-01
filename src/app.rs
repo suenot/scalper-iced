@@ -60,9 +60,11 @@ pub struct App {
     resize_px_per_unit: f32,          // calculated on first move for 1:1 tracking
     resize_start_widths: Vec<(PanelId, u16)>,
 
-    // FPS counter
-    frame_count: u32,
+    // FPS (all update calls = renders) + MPS (WS messages/sec)
+    render_count: u32,
+    ws_msg_count: u32,
     fps: u32,
+    mps: u32,
     last_fps_instant: Instant,
 
     // Help overlay
@@ -131,8 +133,10 @@ impl App {
             resize_start_x: 0.0,
             resize_px_per_unit: 10.0,
             resize_start_widths: Vec::new(),
-            frame_count: 0,
+            render_count: 0,
+            ws_msg_count: 0,
             fps: 0,
+            mps: 0,
             last_fps_instant: Instant::now(),
             show_help: false,
         };
@@ -154,6 +158,8 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) {
+        self.render_count += 1;
+
         match message {
             Message::WsEvent(event) => match event {
                 ws::WsEvent::Connected => {
@@ -166,29 +172,38 @@ impl App {
                 }
                 ws::WsEvent::MessageReceived(msg) => {
                     self.message_count += 1;
-                    self.frame_count += 1;
+                    self.ws_msg_count += 1;
+
+                    // Track if price axis changed (only orderbook updates it)
+                    let mut price_axis_changed = false;
 
                     if let Some(ob) = msg.orderbook {
                         let mid = ob.mid_price();
-                        self.last_price = mid;
-                        self.price_axis.update_last_price(mid);
-                        self.position.mark_price = mid;
-
+                        if (mid - self.last_price).abs() > f64::EPSILON {
+                            self.last_price = mid;
+                            self.price_axis.update_last_price(mid);
+                            self.position.mark_price = mid;
+                            price_axis_changed = true;
+                        }
                         self.orderbook_canvas.update_data(ob);
                         self.orderbook_canvas.update_price_axis(&self.price_axis);
                     }
 
                     if let Some(clusters) = msg.clusters {
                         self.cluster_canvas.update_data(clusters);
-                        self.cluster_canvas.update_price_axis(&self.price_axis);
+                        if price_axis_changed {
+                            self.cluster_canvas.update_price_axis(&self.price_axis);
+                        }
                     }
 
                     if let Some(ticks) = msg.ticks {
                         self.tick_chart_canvas.update_data(ticks.clone());
-                        self.tick_chart_canvas.update_price_axis(&self.price_axis);
                         self.bubble_chart_canvas.update_data(ticks.clone());
-                        self.bubble_chart_canvas.update_price_axis(&self.price_axis);
                         self.tape.update_ticks(ticks);
+                        if price_axis_changed {
+                            self.tick_chart_canvas.update_price_axis(&self.price_axis);
+                            self.bubble_chart_canvas.update_price_axis(&self.price_axis);
+                        }
                     }
                 }
                 ws::WsEvent::Error(e) => {
@@ -374,9 +389,12 @@ impl App {
                 let now = Instant::now();
                 let elapsed = now.duration_since(self.last_fps_instant);
                 if elapsed.as_millis() > 0 {
-                    self.fps = (self.frame_count as f64 / elapsed.as_secs_f64()).round() as u32;
+                    let secs = elapsed.as_secs_f64();
+                    self.fps = (self.render_count as f64 / secs).round() as u32;
+                    self.mps = (self.ws_msg_count as f64 / secs).round() as u32;
                 }
-                self.frame_count = 0;
+                self.render_count = 0;
+                self.ws_msg_count = 0;
                 self.last_fps_instant = now;
             }
 
@@ -450,9 +468,9 @@ impl App {
             toggle_buttons = toggle_buttons.push(wrapped);
         }
 
-        let fps_color = if self.fps >= 8 {
+        let mps_color = if self.mps >= 8 {
             t::BID_GREEN
-        } else if self.fps >= 4 {
+        } else if self.mps >= 4 {
             t::SPREAD_YELLOW
         } else {
             t::ASK_RED
@@ -490,9 +508,11 @@ impl App {
         .spacing(4)
         .align_y(iced::Alignment::Center);
 
-        let fps_label = text(format!("{} fps", self.fps))
-            .size(11)
-            .color(fps_color);
+        let stats_label = row![
+            text(format!("{} mps", self.mps)).size(10).color(mps_color),
+            text(" | ").size(10).color(t::TEXT_DIM),
+            text(format!("{} fps", self.fps)).size(10).color(t::TEXT_DIM),
+        ].spacing(0);
 
         let help_btn = button(text("?").size(10).color(t::TEXT_BRIGHT))
             .on_press(Message::ToggleHelp)
@@ -510,7 +530,7 @@ impl App {
         let status_bar = container(
             row![
                 container(left_bar).width(Length::Fill),
-                fps_label,
+                stats_label,
                 help_btn,
             ]
             .spacing(8)
