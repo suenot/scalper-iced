@@ -54,6 +54,7 @@ pub enum Message {
     OrderBookClicked { price: f64, side: Side },
     Scroll(f32),
     Zoom(f32),
+    ChangePriceStep(f32),
     SnapToPrice,
 
     // Trading (stubbed)

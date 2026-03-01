@@ -235,6 +235,15 @@ impl App {
                 self.bubble_chart_canvas.update_price_axis(&self.price_axis);
             }
 
+            Message::ChangePriceStep(delta) => {
+                self.price_axis.on_change_price_step(delta);
+                println!("[UI] Price step: {:.4}", self.price_axis.display_step);
+                self.orderbook_canvas.update_price_axis(&self.price_axis);
+                self.cluster_canvas.update_price_axis(&self.price_axis);
+                self.tick_chart_canvas.update_price_axis(&self.price_axis);
+                self.bubble_chart_canvas.update_price_axis(&self.price_axis);
+            }
+
             Message::SnapToPrice => {
                 self.price_axis.snap_to_price();
                 self.orderbook_canvas.update_price_axis(&self.price_axis);
@@ -500,6 +509,9 @@ impl App {
             text("  Mode: ").size(11).color(t::TEXT_DIM),
             mode_text,
             center_btn,
+            text(format!("  Step: {}", format_step(self.price_axis.display_step)))
+                .size(10)
+                .color(t::TEXT_DIM),
             text(format!("  Msgs: {}  ", self.message_count))
                 .size(10)
                 .color(t::TEXT_DIM),
@@ -680,6 +692,8 @@ impl App {
             hk_row("LShift", "Center orderbook on spread"),
             hk_row("R", "Toggle follow mode (Auto/Manual)"),
             hk_row("Scroll", "Scroll price axis"),
+            hk_row("Ctrl+Scroll", "Change price step (grouping)"),
+            hk_row("Shift+Scroll", "Zoom (change row height)"),
             text("").size(4),
 
             text("Trading (stub)").size(13).color(t::BID_GREEN),
@@ -760,5 +774,17 @@ impl App {
         }
 
         Subscription::batch(subs)
+    }
+}
+
+fn format_step(step: f64) -> String {
+    if step >= 1.0 {
+        format!("{:.0}", step)
+    } else if step >= 0.1 {
+        format!("{:.1}", step)
+    } else if step >= 0.01 {
+        format!("{:.2}", step)
+    } else {
+        format!("{:.4}", step)
     }
 }

@@ -1,4 +1,5 @@
 use iced::event::Event;
+use iced::keyboard;
 use iced::mouse;
 use iced::widget::canvas::{self, Action, Canvas, Geometry, Path, Stroke, Text};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
@@ -7,6 +8,12 @@ use crate::message::{Message, Side};
 use crate::model::OrderBookSnapshot;
 use crate::price_axis::PriceAxis;
 use crate::theme as t;
+
+/// Tracks keyboard modifiers for Ctrl+Scroll / Shift+Scroll detection.
+#[derive(Debug, Default)]
+pub struct CanvasState {
+    modifiers: keyboard::Modifiers,
+}
 
 pub struct OrderBookCanvas {
     pub orderbook: Option<OrderBookSnapshot>,
@@ -42,16 +49,20 @@ impl OrderBookCanvas {
 }
 
 impl canvas::Program<Message> for &OrderBookCanvas {
-    type State = ();
+    type State = CanvasState;
 
     fn update(
         &self,
-        _state: &mut Self::State,
+        state: &mut Self::State,
         event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<Action<Message>> {
         match event {
+            // Track modifier keys (Ctrl, Shift, etc.)
+            Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) => {
+                state.modifiers = *mods;
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(pos) = cursor.position_in(bounds) {
                     let price = self.price_axis.y_to_price(pos.y, bounds.height);
@@ -69,7 +80,16 @@ impl canvas::Program<Message> for &OrderBookCanvas {
                     mouse::ScrollDelta::Pixels { y, .. } => *y / 20.0,
                 };
                 if cursor.is_over(bounds) {
-                    return Some(Action::publish(Message::Scroll(dy)).and_capture());
+                    if state.modifiers.control() {
+                        // Ctrl+Scroll: change price step (grouping)
+                        return Some(Action::publish(Message::ChangePriceStep(dy)).and_capture());
+                    } else if state.modifiers.shift() {
+                        // Shift+Scroll: zoom (change row height)
+                        return Some(Action::publish(Message::Zoom(dy)).and_capture());
+                    } else {
+                        // Plain scroll: move price axis
+                        return Some(Action::publish(Message::Scroll(dy)).and_capture());
+                    }
                 }
             }
             _ => {}

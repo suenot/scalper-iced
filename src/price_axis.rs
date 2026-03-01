@@ -84,6 +84,26 @@ impl PriceAxis {
         self.row_height = new_height.clamp(theme::MIN_ROW_HEIGHT, theme::MAX_ROW_HEIGHT);
     }
 
+    /// Handle price step change (Ctrl+scroll — change grouping).
+    /// Moves through a smooth sequence: tick_size multiples of 1, 2, 5, 10, 20, 50, ...
+    pub fn on_change_price_step(&mut self, delta: f32) {
+        // Predefined multipliers for smooth stepping
+        let steps = [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0];
+        let current_mult = self.display_step / self.tick_size;
+
+        if delta > 0.0 {
+            // Find next step up
+            if let Some(&next) = steps.iter().find(|&&s| s > current_mult * 1.01) {
+                self.display_step = self.tick_size * next;
+            }
+        } else {
+            // Find next step down
+            if let Some(&prev) = steps.iter().rev().find(|&&s| s < current_mult * 0.99) {
+                self.display_step = self.tick_size * prev;
+            }
+        }
+    }
+
     /// Snap back to following the last price.
     pub fn snap_to_price(&mut self) {
         self.center_price = self.last_price;
