@@ -85,19 +85,21 @@ impl PriceAxis {
     }
 
     /// Handle price step change (Ctrl+scroll — change grouping).
-    /// Moves through a smooth sequence: tick_size multiples of 1, 2, 5, 10, 20, 50, ...
+    /// Smooth sequence with intermediate steps: 1, 1.5, 2, 3, 5, 7, 10, 15, 20, 30, 50, ...
     pub fn on_change_price_step(&mut self, delta: f32) {
-        // Predefined multipliers for smooth stepping
-        let steps = [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0];
+        let steps: &[f64] = &[
+            1.0, 1.5, 2.0, 3.0, 5.0, 7.0,
+            10.0, 15.0, 20.0, 30.0, 50.0, 70.0,
+            100.0, 150.0, 200.0, 300.0, 500.0, 700.0,
+            1000.0, 1500.0, 2000.0, 3000.0, 5000.0, 7000.0, 10000.0,
+        ];
         let current_mult = self.display_step / self.tick_size;
 
         if delta > 0.0 {
-            // Find next step up
             if let Some(&next) = steps.iter().find(|&&s| s > current_mult * 1.01) {
                 self.display_step = self.tick_size * next;
             }
         } else {
-            // Find next step down
             if let Some(&prev) = steps.iter().rev().find(|&&s| s < current_mult * 0.99) {
                 self.display_step = self.tick_size * prev;
             }
