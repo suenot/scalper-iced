@@ -23,12 +23,15 @@ pub fn hotkey_subscription() -> Subscription<Message> {
                 }
             }
             match key {
-                Key::Named(Named::F1) => Message::BuyMarket,
-                Key::Named(Named::F2) => Message::SellMarket,
-                Key::Named(Named::F3) => Message::ClosePosition,
-                Key::Named(Named::F5) => Message::CancelAllOrders,
+                // CScalp-style hotkeys
+                Key::Named(Named::F1) => Message::ToggleHelp,
+                Key::Named(Named::Shift) => Message::SnapToPrice,  // Center orderbook on spread
+                Key::Named(Named::Space) => Message::CancelAllOrders, // CScalp: Space = cancel limits
+                Key::Character(ref c) if c.as_str() == "t" => Message::BuyMarket,
+                Key::Character(ref c) if c.as_str() == "y" => Message::SellMarket,
+                Key::Character(ref c) if c.as_str() == "d" => Message::ClosePosition,
+                Key::Character(ref c) if c.as_str() == "r" => Message::ToggleFollowMode,
                 Key::Named(Named::Escape) => Message::EmergencyCloseAll,
-                Key::Named(Named::Space) => Message::ToggleFollowMode,
                 _ => Message::NoOp,
             }
         }

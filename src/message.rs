@@ -81,6 +81,12 @@ pub enum Message {
     // Order panel
     QuantityChanged(String),
 
+    // Help overlay
+    ToggleHelp,
+
+    // FPS counter
+    FpsTick,
+
     // No-op (for unhandled hotkeys)
     NoOp,
 }

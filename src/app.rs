@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use iced::event::Event;
 use iced::mouse;
-use iced::widget::{column, container, row, text, Row};
+use iced::widget::{button, column, container, row, scrollable, stack, text, Row};
 use iced::{Color, Element, Length, Subscription};
 
 use crate::message::{Message, PanelId, Side};
@@ -58,6 +59,14 @@ pub struct App {
     resize_start_x: f32,
     resize_px_per_unit: f32,          // calculated on first move for 1:1 tracking
     resize_start_widths: Vec<(PanelId, u16)>,
+
+    // FPS counter
+    frame_count: u32,
+    fps: u32,
+    last_fps_instant: Instant,
+
+    // Help overlay
+    show_help: bool,
 }
 
 impl App {
@@ -122,6 +131,10 @@ impl App {
             resize_start_x: 0.0,
             resize_px_per_unit: 10.0,
             resize_start_widths: Vec::new(),
+            frame_count: 0,
+            fps: 0,
+            last_fps_instant: Instant::now(),
+            show_help: false,
         };
 
         (app, iced::Task::none())
@@ -153,6 +166,7 @@ impl App {
                 }
                 ws::WsEvent::MessageReceived(msg) => {
                     self.message_count += 1;
+                    self.frame_count += 1;
 
                     if let Some(ob) = msg.orderbook {
                         let mid = ob.mid_price();
@@ -352,6 +366,20 @@ impl App {
                 }
             }
 
+            Message::ToggleHelp => {
+                self.show_help = !self.show_help;
+            }
+
+            Message::FpsTick => {
+                let now = Instant::now();
+                let elapsed = now.duration_since(self.last_fps_instant);
+                if elapsed.as_millis() > 0 {
+                    self.fps = (self.frame_count as f64 / elapsed.as_secs_f64()).round() as u32;
+                }
+                self.frame_count = 0;
+                self.last_fps_instant = now;
+            }
+
             Message::NoOp => {}
         }
     }
@@ -422,23 +450,70 @@ impl App {
             toggle_buttons = toggle_buttons.push(wrapped);
         }
 
+        let fps_color = if self.fps >= 8 {
+            t::BID_GREEN
+        } else if self.fps >= 4 {
+            t::SPREAD_YELLOW
+        } else {
+            t::ASK_RED
+        };
+
+        let center_btn = button(text("Center").size(10).color(t::TEXT_BRIGHT))
+            .on_press(Message::SnapToPrice)
+            .padding([2, 6])
+            .style(|_theme: &_, _status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.1))),
+                text_color: t::TEXT_BRIGHT,
+                border: iced::Border {
+                    radius: 3.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+
+        let left_bar = row![
+            ws_indicator,
+            text(format!("  {}  ", self.symbol))
+                .size(12)
+                .color(t::TEXT_BRIGHT),
+            text(format!("Last: {:.1}", self.last_price))
+                .size(12)
+                .color(t::SPREAD_YELLOW),
+            text("  Mode: ").size(11).color(t::TEXT_DIM),
+            mode_text,
+            center_btn,
+            text(format!("  Msgs: {}  ", self.message_count))
+                .size(10)
+                .color(t::TEXT_DIM),
+        ]
+        .push(toggle_buttons)
+        .spacing(4)
+        .align_y(iced::Alignment::Center);
+
+        let fps_label = text(format!("{} fps", self.fps))
+            .size(11)
+            .color(fps_color);
+
+        let help_btn = button(text("?").size(10).color(t::TEXT_BRIGHT))
+            .on_press(Message::ToggleHelp)
+            .padding([2, 6])
+            .style(|_theme: &_, _status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.1))),
+                text_color: t::TEXT_BRIGHT,
+                border: iced::Border {
+                    radius: 3.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+
         let status_bar = container(
             row![
-                ws_indicator,
-                text(format!("  {}  ", self.symbol))
-                    .size(12)
-                    .color(t::TEXT_BRIGHT),
-                text(format!("Last: {:.1}", self.last_price))
-                    .size(12)
-                    .color(t::SPREAD_YELLOW),
-                text("  Mode: ").size(11).color(t::TEXT_DIM),
-                mode_text,
-                text(format!("  Msgs: {}  ", self.message_count))
-                    .size(10)
-                    .color(t::TEXT_DIM),
+                container(left_bar).width(Length::Fill),
+                fps_label,
+                help_btn,
             ]
-            .push(toggle_buttons)
-            .spacing(4)
+            .spacing(8)
             .align_y(iced::Alignment::Center)
             .padding(4),
         )
@@ -533,21 +608,120 @@ impl App {
             content = content.push(bottom_panels);
         }
 
-        container(content)
+        let base = container(content)
             .style(|_theme: &_| container::Style {
                 background: Some(t::BACKGROUND.into()),
                 ..Default::default()
             })
             .width(Length::Fill)
             .height(Length::Fill)
-            .padding(2)
+            .padding(2);
+
+        if self.show_help {
+            let help_overlay = self.help_overlay();
+            stack![base, help_overlay]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            base.into()
+        }
+    }
+
+    fn help_overlay(&self) -> Element<'_, Message> {
+        let hk_row = |key: &'static str, desc: &'static str| -> Element<'_, Message> {
+            row![
+                container(text(key).size(12).color(t::SPREAD_YELLOW))
+                    .width(Length::Fixed(120.0)),
+                text(desc).size(12).color(t::TEXT_DIM),
+            ]
+            .spacing(8)
             .into()
+        };
+
+        let help_content = column![
+            row![
+                text("Hotkeys").size(16).color(t::TEXT_BRIGHT),
+                container(text("").size(1)).width(Length::Fill),
+                button(text("X").size(12).color(t::TEXT_BRIGHT))
+                    .on_press(Message::ToggleHelp)
+                    .padding([2, 8])
+                    .style(|_theme: &_, _status| button::Style {
+                        background: Some(iced::Background::Color(Color::from_rgba(1.0, 0.3, 0.3, 0.3))),
+                        text_color: t::TEXT_BRIGHT,
+                        border: iced::Border { radius: 3.0.into(), ..Default::default() },
+                        ..Default::default()
+                    }),
+            ]
+            .align_y(iced::Alignment::Center),
+            text("").size(6),
+
+            text("Navigation").size(13).color(t::BID_GREEN),
+            hk_row("LShift", "Center orderbook on spread"),
+            hk_row("R", "Toggle follow mode (Auto/Manual)"),
+            hk_row("Scroll", "Scroll price axis"),
+            text("").size(4),
+
+            text("Trading (stub)").size(13).color(t::BID_GREEN),
+            hk_row("T", "Buy at market"),
+            hk_row("Y", "Sell at market"),
+            hk_row("D", "Close position"),
+            hk_row("Space", "Cancel all limit orders"),
+            hk_row("Escape", "Emergency close all"),
+            text("").size(4),
+
+            text("Panels").size(13).color(t::BID_GREEN),
+            hk_row("Ctrl+1", "Toggle Clusters"),
+            hk_row("Ctrl+2", "Toggle Ticks"),
+            hk_row("Ctrl+3", "Toggle Bubbles"),
+            hk_row("Ctrl+4", "Toggle OrderBook"),
+            hk_row("Ctrl+5", "Toggle Tape"),
+            hk_row("Ctrl+6", "Toggle Bottom Bar"),
+            text("").size(4),
+
+            text("Other").size(13).color(t::BID_GREEN),
+            hk_row("F1", "Toggle this help"),
+            hk_row("Click btn", "Show/hide panel"),
+            hk_row("Drag btn", "Reorder panels"),
+            hk_row("Drag divider", "Resize panels"),
+        ]
+        .spacing(3)
+        .padding(20)
+        .width(Length::Fixed(340.0));
+
+        // Semi-transparent backdrop + centered help card
+        iced::widget::mouse_area(
+            container(
+                container(scrollable(help_content))
+                    .style(|_theme: &_| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgba(0.1, 0.1, 0.18, 0.97))),
+                        border: iced::Border {
+                            radius: 8.0.into(),
+                            width: 1.0,
+                            color: Color::from_rgba(1.0, 1.0, 1.0, 0.15),
+                        },
+                        ..Default::default()
+                    })
+                    .max_height(500.0),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center)
+            .style(|_theme: &_| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.5))),
+                ..Default::default()
+            }),
+        )
+        .on_press(Message::ToggleHelp)
+        .into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
         let mut subs = vec![
             ws::client::connect(self.ws_url.clone()).map(Message::WsEvent),
             crate::hotkeys::hotkey_subscription(),
+            iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::FpsTick),
         ];
 
         // While resizing, listen for global mouse events
