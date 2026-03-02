@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use iced::event::Event;
 use iced::mouse;
-use iced::widget::{button, column, container, row, scrollable, stack, text, Column, Row};
+use iced::widget::{button, column, container, row, scrollable, stack, text, text_input, Column, Row};
 use iced::{Color, Element, Length, Subscription};
 
 use crate::dashboard::{Dashboard, GRID_PRESETS};
@@ -32,6 +32,10 @@ pub struct App {
 
     // UI state
     show_help: bool,
+
+    // Instrument picker (for empty grid cells)
+    editing_cell: Option<(usize, usize)>,
+    cell_symbol_input: String,
 }
 
 impl App {
@@ -114,6 +118,8 @@ impl App {
             mps: 0,
             last_fps_instant: Instant::now(),
             show_help: false,
+            editing_cell: None,
+            cell_symbol_input: String::new(),
         };
 
         (app, iced::Task::none())
@@ -199,18 +205,36 @@ impl App {
             }
 
             Message::SetPanelSymbol { dash, panel, symbol } => {
-                if let Some(dashboard) = self.dashboards.get_mut(dash) {
-                    if panel < dashboard.panels.len() {
-                        dashboard.panels[panel] = Some(TradingPanel::new(
-                            symbol,
-                            self.default_price_step,
-                            self.ws_base_url.clone(),
-                            self.clusters_n,
-                            self.ticks_n,
-                        ));
+                let sym = symbol.trim().to_uppercase();
+                if !sym.is_empty() {
+                    if let Some(dashboard) = self.dashboards.get_mut(dash) {
+                        if panel < dashboard.panels.len() {
+                            dashboard.panels[panel] = Some(TradingPanel::new(
+                                sym,
+                                self.default_price_step,
+                                self.ws_base_url.clone(),
+                                self.clusters_n,
+                                self.ticks_n,
+                            ));
+                        }
                     }
                 }
+                self.editing_cell = None;
+                self.cell_symbol_input = String::new();
                 self.save_settings();
+            }
+
+            // Instrument picker
+            Message::BeginEditCell { dash, panel } => {
+                self.editing_cell = Some((dash, panel));
+                self.cell_symbol_input = String::new();
+            }
+            Message::CancelEditCell => {
+                self.editing_cell = None;
+                self.cell_symbol_input = String::new();
+            }
+            Message::CellSymbolInput(text) => {
+                self.cell_symbol_input = text.to_uppercase();
             }
 
             // Global mouse tracking for panel resize (listen_with can't capture vars)
@@ -466,7 +490,7 @@ impl App {
             let mut r = Row::new().spacing(2).height(Length::Fill);
             for col in 0..cols {
                 let panel_idx = col;
-                let cell = render_cell(dash, panel_idx, dashboard);
+                let cell = self.render_cell(dash, panel_idx, dashboard);
                 r = r.push(cell);
             }
             r.into()
@@ -476,7 +500,7 @@ impl App {
                 let mut r = Row::new().spacing(2).height(Length::Fill);
                 for col in 0..cols {
                     let panel_idx = row_idx * cols + col;
-                    let cell = render_cell(dash, panel_idx, dashboard);
+                    let cell = self.render_cell(dash, panel_idx, dashboard);
                     r = r.push(cell);
                 }
                 col_widget = col_widget.push(r);
@@ -494,12 +518,12 @@ impl App {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        if self.show_help {
-            let help_overlay = help_overlay();
-            stack![base, help_overlay]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
+        if let Some((ed_dash, ed_panel)) = self.editing_cell {
+            let picker = self.picker_overlay(ed_dash, ed_panel);
+            stack![base, picker].width(Length::Fill).height(Length::Fill).into()
+        } else if self.show_help {
+            let help_ov = help_overlay();
+            stack![base, help_ov].width(Length::Fill).height(Length::Fill).into()
         } else {
             base.into()
         }
@@ -547,37 +571,244 @@ impl App {
 }
 
 // ------------------------------------------------------------------ //
-//  Free functions (no &self borrow so no conflict with dashboard borrow)
+//  App methods for rendering cells and overlays
 // ------------------------------------------------------------------ //
 
-fn render_cell(dash: usize, panel_idx: usize, dashboard: &Dashboard) -> Element<'_, Message> {
-    match dashboard.panels.get(panel_idx) {
-        Some(Some(tp)) => tp
-            .view()
-            .map(move |msg| Message::ForPanel { dash, panel: panel_idx, msg }),
-        _ => container(
+impl App {
+    fn render_cell<'a>(
+        &'a self,
+        dash: usize,
+        panel_idx: usize,
+        dashboard: &'a Dashboard,
+    ) -> Element<'a, Message> {
+        match dashboard.panels.get(panel_idx) {
+            Some(Some(tp)) => tp
+                .view()
+                .map(move |msg| Message::ForPanel { dash, panel: panel_idx, msg }),
+            _ => {
+                let inner = container(
+                    column![
+                        text("+").size(28).color(t::TEXT_DIM),
+                        text("Click to add instrument").size(10).color(t::TEXT_DIM),
+                    ]
+                    .spacing(6)
+                    .align_x(iced::alignment::Horizontal::Center),
+                )
+                .style(|_theme: &_| container::Style {
+                    background: Some(t::PANEL_BG.into()),
+                    border: iced::Border {
+                        color: Color::from_rgba(1.0, 1.0, 1.0, 0.08),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center);
+
+                iced::widget::mouse_area(inner)
+                    .on_press(Message::BeginEditCell { dash, panel: panel_idx })
+                    .interaction(iced::mouse::Interaction::Pointer)
+                    .into()
+            }
+        }
+    }
+
+    fn picker_overlay(&self, dash: usize, panel: usize) -> Element<'_, Message> {
+        const POPULAR: &[&str] = &[
+            "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
+            "XRPUSDT", "ADAUSDT", "DOGEUSDT", "AVAXUSDT",
+            "LINKUSDT", "DOTUSDT", "UNIUSDT", "MATICUSDT",
+        ];
+
+        let confirm_msg = Message::SetPanelSymbol {
+            dash,
+            panel,
+            symbol: self.cell_symbol_input.clone(),
+        };
+        let can_confirm = !self.cell_symbol_input.trim().is_empty();
+
+        // ---- Helper: styled toggle button ----
+        let chip = |label: &str, active: bool, msg: Message| -> Element<'_, Message> {
+            let label = label.to_owned();
+            button(text(label).size(11).color(if active { t::TEXT_BRIGHT } else { t::TEXT_DIM }))
+                .on_press(msg)
+                .padding([3, 8])
+                .style(move |_theme: &_, _status| button::Style {
+                    background: Some(iced::Background::Color(if active {
+                        Color::from_rgba(0.3, 0.6, 1.0, 0.35)
+                    } else {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.06)
+                    })),
+                    text_color: if active { t::TEXT_BRIGHT } else { t::TEXT_DIM },
+                    border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                    ..Default::default()
+                })
+                .into()
+        };
+
+        // ---- Exchange row (Bybit active, others cosmetic) ----
+        let exchange_row = row![
+            text("Exchange:").size(11).color(t::TEXT_DIM).width(Length::Fixed(72.0)),
+            chip("● Bybit", true, Message::NoOp),
+            chip("Binance", false, Message::NoOp),
+            chip("OKX", false, Message::NoOp),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center);
+
+        // ---- Market type row (Linear active, others cosmetic) ----
+        let market_row = row![
+            text("Market:").size(11).color(t::TEXT_DIM).width(Length::Fixed(72.0)),
+            chip("● Linear", true, Message::NoOp),
+            chip("Inverse", false, Message::NoOp),
+            chip("Spot", false, Message::NoOp),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center);
+
+        // ---- Symbol text input ----
+        let sym_input = row![
+            text("Symbol:").size(11).color(t::TEXT_DIM).width(Length::Fixed(72.0)),
+            text_input("BTCUSDT", &self.cell_symbol_input)
+                .on_input(Message::CellSymbolInput)
+                .on_submit(confirm_msg.clone())
+                .size(13)
+                .width(Length::Fill),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center);
+
+        // ---- Popular symbols (4 per row) ----
+        let mut sym_rows: Vec<Element<'_, Message>> = Vec::new();
+        for chunk in POPULAR.chunks(4) {
+            let mut r = Row::new().spacing(4);
+            for sym in chunk {
+                let sym_str = sym.to_string();
+                let sym_str2 = sym_str.clone();
+                let is_selected = self.cell_symbol_input == sym_str;
+                r = r.push(
+                    button(text(sym_str2).size(10).color(if is_selected { t::TEXT_BRIGHT } else { t::TEXT_DIM }))
+                        .on_press(Message::CellSymbolInput(sym_str))
+                        .padding([3, 6])
+                        .style(move |_theme: &_, _status| button::Style {
+                            background: Some(iced::Background::Color(if is_selected {
+                                Color::from_rgba(0.3, 0.6, 1.0, 0.35)
+                            } else {
+                                Color::from_rgba(1.0, 1.0, 1.0, 0.06)
+                            })),
+                            text_color: if is_selected { t::TEXT_BRIGHT } else { t::TEXT_DIM },
+                            border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                            ..Default::default()
+                        }),
+                );
+            }
+            sym_rows.push(r.into());
+        }
+        let sym_grid = column(sym_rows).spacing(4);
+
+        // ---- Action buttons ----
+        let cancel_btn = button(text("Cancel").size(12).color(t::TEXT_DIM))
+            .on_press(Message::CancelEditCell)
+            .padding([4, 16])
+            .style(|_theme: &_, _status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.06))),
+                text_color: t::TEXT_DIM,
+                border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                ..Default::default()
+            });
+
+        let add_btn: Element<'_, Message> = if can_confirm {
+            button(text("Add ▶").size(12).color(t::TEXT_BRIGHT))
+                .on_press(confirm_msg)
+                .padding([4, 16])
+                .style(|_theme: &_, _status| button::Style {
+                    background: Some(iced::Background::Color(Color::from_rgba(0.15, 0.5, 0.2, 0.9))),
+                    text_color: t::TEXT_BRIGHT,
+                    border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                    ..Default::default()
+                })
+                .into()
+        } else {
+            container(text("Add ▶").size(12).color(t::TEXT_DIM))
+                .padding([4, 16])
+                .style(|_theme: &_| container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.04))),
+                    border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                    ..Default::default()
+                })
+                .into()
+        };
+
+        let action_row = row![
+            container(text("")).width(Length::Fill),
+            cancel_btn,
+            add_btn,
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
+
+        // ---- Dialog card ----
+        let card = container(
             column![
-                text("Empty").size(12).color(t::TEXT_DIM),
-                text("Add symbol via CLI --symbol").size(10).color(t::TEXT_DIM),
+                // Title row
+                row![
+                    text("Add Instrument").size(14).color(t::TEXT_BRIGHT),
+                    container(text("")).width(Length::Fill),
+                    button(text("×").size(13).color(t::TEXT_DIM))
+                        .on_press(Message::CancelEditCell)
+                        .padding([2, 7])
+                        .style(|_theme: &_, _status| button::Style {
+                            background: Some(iced::Background::Color(
+                                Color::from_rgba(1.0, 1.0, 1.0, 0.06),
+                            )),
+                            text_color: t::TEXT_DIM,
+                            border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                            ..Default::default()
+                        }),
+                ]
+                .align_y(iced::Alignment::Center),
+                text("").size(4),
+                exchange_row,
+                market_row,
+                text("").size(4),
+                sym_input,
+                text("").size(4),
+                text("Popular:").size(10).color(t::TEXT_DIM),
+                sym_grid,
+                text("").size(6),
+                action_row,
             ]
-            .spacing(4)
-            .align_x(iced::alignment::Horizontal::Center)
-            .padding(16),
+            .spacing(6)
+            .padding(20)
+            .width(Length::Fixed(440.0)),
         )
         .style(|_theme: &_| container::Style {
-            background: Some(t::PANEL_BG.into()),
+            background: Some(iced::Background::Color(Color::from_rgba(0.1, 0.1, 0.18, 0.97))),
             border: iced::Border {
-                color: Color::from_rgba(1.0, 1.0, 1.0, 0.08),
+                radius: 8.0.into(),
                 width: 1.0,
-                radius: 4.0.into(),
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.15),
             },
             ..Default::default()
-        })
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(iced::alignment::Horizontal::Center)
-        .align_y(iced::alignment::Vertical::Center)
-        .into(),
+        });
+
+        // ---- Backdrop (click outside to cancel) ----
+        iced::widget::mouse_area(
+            container(card)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center)
+                .style(|_theme: &_| container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.55))),
+                    ..Default::default()
+                }),
+        )
+        .on_press(Message::CancelEditCell)
+        .into()
     }
 }
 

@@ -61,6 +61,11 @@ pub enum Message {
     /// Set a symbol for a panel cell (creates/replaces TradingPanel)
     SetPanelSymbol { dash: usize, panel: usize, symbol: String },
 
+    // Instrument picker (for empty grid cells)
+    BeginEditCell { dash: usize, panel: usize },
+    CancelEditCell,
+    CellSymbolInput(String),
+
     // Global mouse events (used for panel resize tracking)
     GlobalMouseMove(f32),
     GlobalMouseRelease,
