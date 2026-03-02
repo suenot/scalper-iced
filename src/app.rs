@@ -6,7 +6,7 @@ use iced::widget::{button, column, container, row, scrollable, stack, text, text
 use iced::{Color, Element, Length, Subscription};
 
 use crate::dashboard::{Dashboard, GRID_PRESETS};
-use crate::message::Message;
+use crate::message::{Exchange, MarketType, Message};
 use crate::settings::{panel_id_to_str, str_to_panel_id, DashboardConfig, PanelConfig, Settings};
 use crate::theme as t;
 use crate::trading_panel::TradingPanel;
@@ -36,6 +36,15 @@ pub struct App {
     // Instrument picker (for empty grid cells)
     editing_cell: Option<(usize, usize)>,
     cell_symbol_input: String,
+
+    // Picker state — exchange / market / dynamic symbol list
+    picker_exchange: Exchange,
+    picker_market: MarketType,
+    available_symbols: Vec<String>,
+    symbols_loading: bool,
+
+    // Base URL for REST calls (http://host:port)
+    http_base_url: String,
 }
 
 impl App {
@@ -104,6 +113,7 @@ impl App {
             dashboards.push(d);
         }
 
+        let http_base_url = ws_base_url.replacen("ws://", "http://", 1);
         let app = Self {
             dashboards,
             active_dashboard,
@@ -120,6 +130,11 @@ impl App {
             show_help: false,
             editing_cell: None,
             cell_symbol_input: String::new(),
+            picker_exchange: Exchange::Bybit,
+            picker_market: MarketType::Linear,
+            available_symbols: Vec::new(),
+            symbols_loading: false,
+            http_base_url,
         };
 
         (app, iced::Task::none())
@@ -139,7 +154,7 @@ impl App {
     //  Update
     // ------------------------------------------------------------------ //
 
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: Message) -> iced::Task<Message> {
         self.render_count += 1;
 
         match message {
@@ -228,6 +243,14 @@ impl App {
             Message::BeginEditCell { dash, panel } => {
                 self.editing_cell = Some((dash, panel));
                 self.cell_symbol_input = String::new();
+                self.symbols_loading = true;
+                self.available_symbols.clear();
+                return fetch_symbols_task(format!(
+                    "{}/symbols?exchange={}&market={}",
+                    self.http_base_url,
+                    self.picker_exchange.as_str(),
+                    self.picker_market.as_str()
+                ));
             }
             Message::CancelEditCell => {
                 self.editing_cell = None;
@@ -291,8 +314,42 @@ impl App {
                 self.last_fps_instant = now;
             }
 
+            // Picker — exchange / market switchers
+            Message::SetPickerExchange(e) => {
+                self.picker_exchange = e;
+                self.symbols_loading = true;
+                return fetch_symbols_task(format!(
+                    "{}/symbols?exchange={}&market={}",
+                    self.http_base_url,
+                    e.as_str(),
+                    self.picker_market.as_str()
+                ));
+            }
+            Message::SetPickerMarket(m) => {
+                self.picker_market = m;
+                self.symbols_loading = true;
+                return fetch_symbols_task(format!(
+                    "{}/symbols?exchange={}&market={}",
+                    self.http_base_url,
+                    self.picker_exchange.as_str(),
+                    m.as_str()
+                ));
+            }
+
+            // Symbol list fetch results
+            Message::SymbolsFetched(symbols) => {
+                self.available_symbols = symbols;
+                self.symbols_loading = false;
+            }
+            Message::SymbolsFetchError(e) => {
+                eprintln!("Symbols fetch error: {}", e);
+                self.symbols_loading = false;
+            }
+
             Message::NoOp => {}
         }
+
+        iced::Task::none()
     }
 
     // ------------------------------------------------------------------ //
@@ -617,12 +674,6 @@ impl App {
     }
 
     fn picker_overlay(&self, dash: usize, panel: usize) -> Element<'_, Message> {
-        const POPULAR: &[&str] = &[
-            "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
-            "XRPUSDT", "ADAUSDT", "DOGEUSDT", "AVAXUSDT",
-            "LINKUSDT", "DOTUSDT", "UNIUSDT", "MATICUSDT",
-        ];
-
         let confirm_msg = Message::SetPanelSymbol {
             dash,
             panel,
@@ -630,7 +681,7 @@ impl App {
         };
         let can_confirm = !self.cell_symbol_input.trim().is_empty();
 
-        // ---- Helper: styled toggle button ----
+        // ---- Helper: styled chip/toggle button ----
         let chip = |label: &str, active: bool, msg: Message| -> Element<'_, Message> {
             let label = label.to_owned();
             button(text(label).size(11).color(if active { t::TEXT_BRIGHT } else { t::TEXT_DIM }))
@@ -649,22 +700,26 @@ impl App {
                 .into()
         };
 
-        // ---- Exchange row (Bybit active, others cosmetic) ----
+        // ---- Exchange row (all wired to symbol fetch; WS streaming is still single-exchange) ----
+        let ex = self.picker_exchange;
         let exchange_row = row![
             text("Exchange:").size(11).color(t::TEXT_DIM).width(Length::Fixed(72.0)),
-            chip("● Bybit", true, Message::NoOp),
-            chip("Binance", false, Message::NoOp),
-            chip("OKX", false, Message::NoOp),
+            chip("Bybit",   ex == Exchange::Bybit,   Message::SetPickerExchange(Exchange::Bybit)),
+            chip("Binance", ex == Exchange::Binance, Message::SetPickerExchange(Exchange::Binance)),
+            chip("OKX",     ex == Exchange::OKX,     Message::SetPickerExchange(Exchange::OKX)),
+            chip("Gate",    ex == Exchange::Gate,    Message::SetPickerExchange(Exchange::Gate)),
+            chip("BingX",   ex == Exchange::BingX,   Message::SetPickerExchange(Exchange::BingX)),
         ]
         .spacing(6)
         .align_y(iced::Alignment::Center);
 
-        // ---- Market type row (Linear active, others cosmetic) ----
+        // ---- Market type row (all three wired for Bybit) ----
+        let mkt = self.picker_market;
         let market_row = row![
             text("Market:").size(11).color(t::TEXT_DIM).width(Length::Fixed(72.0)),
-            chip("● Linear", true, Message::NoOp),
-            chip("Inverse", false, Message::NoOp),
-            chip("Spot", false, Message::NoOp),
+            chip("Linear",  mkt == MarketType::Linear,  Message::SetPickerMarket(MarketType::Linear)),
+            chip("Inverse", mkt == MarketType::Inverse, Message::SetPickerMarket(MarketType::Inverse)),
+            chip("Spot",    mkt == MarketType::Spot,    Message::SetPickerMarket(MarketType::Spot)),
         ]
         .spacing(6)
         .align_y(iced::Alignment::Center);
@@ -681,33 +736,94 @@ impl App {
         .spacing(6)
         .align_y(iced::Alignment::Center);
 
-        // ---- Popular symbols (4 per row) ----
-        let mut sym_rows: Vec<Element<'_, Message>> = Vec::new();
-        for chunk in POPULAR.chunks(4) {
-            let mut r = Row::new().spacing(4);
-            for sym in chunk {
-                let sym_str = sym.to_string();
-                let sym_str2 = sym_str.clone();
-                let is_selected = self.cell_symbol_input == sym_str;
-                r = r.push(
-                    button(text(sym_str2).size(10).color(if is_selected { t::TEXT_BRIGHT } else { t::TEXT_DIM }))
-                        .on_press(Message::CellSymbolInput(sym_str))
-                        .padding([3, 6])
-                        .style(move |_theme: &_, _status| button::Style {
-                            background: Some(iced::Background::Color(if is_selected {
-                                Color::from_rgba(0.3, 0.6, 1.0, 0.35)
-                            } else {
-                                Color::from_rgba(1.0, 1.0, 1.0, 0.06)
-                            })),
-                            text_color: if is_selected { t::TEXT_BRIGHT } else { t::TEXT_DIM },
-                            border: iced::Border { radius: 4.0.into(), ..Default::default() },
-                            ..Default::default()
-                        }),
-                );
+        // ---- Symbol validation warning (Task 7) ----
+        let warning: Option<Element<'_, Message>> =
+            if !self.available_symbols.is_empty()
+                && !self.cell_symbol_input.is_empty()
+                && !self.available_symbols.contains(&self.cell_symbol_input)
+                && !self.symbols_loading
+            {
+                Some(
+                    text("⚠ Symbol not found in instrument list")
+                        .size(10)
+                        .color(t::SPREAD_YELLOW)
+                        .into(),
+                )
+            } else {
+                None
+            };
+
+        // ---- Symbol list: dynamic (Task 5) or fallback popular ----
+        const POPULAR: &[&str] = &[
+            "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
+            "XRPUSDT", "ADAUSDT", "DOGEUSDT", "AVAXUSDT",
+            "LINKUSDT", "DOTUSDT", "UNIUSDT", "MATICUSDT",
+        ];
+
+        let filter = self.cell_symbol_input.as_str();
+
+        let sym_list: Element<'_, Message> = if self.symbols_loading {
+            container(text("Loading symbols...").size(10).color(t::TEXT_DIM))
+                .padding([8, 0])
+                .into()
+        } else {
+            // Choose source: dynamic list if available, otherwise static popular
+            let source_iter: Box<dyn Iterator<Item = &str>> = if self.available_symbols.is_empty() {
+                Box::new(POPULAR.iter().copied())
+            } else {
+                Box::new(self.available_symbols.iter().map(|s| s.as_str()))
+            };
+
+            let filtered: Vec<&str> = if filter.is_empty() {
+                source_iter.take(20).collect()
+            } else {
+                source_iter.filter(|s| s.contains(filter)).take(20).collect()
+            };
+
+            if filtered.is_empty() {
+                text(format!("No symbols matching \"{}\"", filter))
+                    .size(10)
+                    .color(t::TEXT_DIM)
+                    .into()
+            } else {
+                let mut rows: Vec<Element<'_, Message>> = Vec::new();
+                for chunk in filtered.chunks(4) {
+                    let mut r = Row::new().spacing(4);
+                    for &sym in chunk {
+                        let s = sym.to_string();
+                        let is_sel = self.cell_symbol_input == s;
+                        r = r.push(
+                            button(
+                                text(s.clone())
+                                    .size(10)
+                                    .color(if is_sel { t::TEXT_BRIGHT } else { t::TEXT_DIM }),
+                            )
+                            .on_press(Message::CellSymbolInput(s))
+                            .padding([3, 6])
+                            .style(move |_theme: &_, _status| button::Style {
+                                background: Some(iced::Background::Color(if is_sel {
+                                    Color::from_rgba(0.3, 0.6, 1.0, 0.35)
+                                } else {
+                                    Color::from_rgba(1.0, 1.0, 1.0, 0.06)
+                                })),
+                                text_color: if is_sel { t::TEXT_BRIGHT } else { t::TEXT_DIM },
+                                border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                                ..Default::default()
+                            }),
+                        );
+                    }
+                    rows.push(r.into());
+                }
+                // Dynamic list gets a scroll area; popular fallback is short enough without
+                if self.available_symbols.is_empty() {
+                    column(rows).spacing(4).into()
+                } else {
+                    scrollable(column(rows).spacing(4))
+                        .height(Length::Fixed(140.0))
+                        .into()
+                }
             }
-            sym_rows.push(r.into());
-        }
-        let sym_grid = column(sym_rows).spacing(4);
+        };
 
         // ---- Action buttons ----
         let cancel_btn = button(text("Cancel").size(12).color(t::TEXT_DIM))
@@ -750,42 +866,43 @@ impl App {
         .spacing(8)
         .align_y(iced::Alignment::Center);
 
-        // ---- Dialog card ----
-        let card = container(
-            column![
-                // Title row
-                row![
-                    text("Add Instrument").size(14).color(t::TEXT_BRIGHT),
-                    container(text("")).width(Length::Fill),
-                    button(text("×").size(13).color(t::TEXT_DIM))
-                        .on_press(Message::CancelEditCell)
-                        .padding([2, 7])
-                        .style(|_theme: &_, _status| button::Style {
-                            background: Some(iced::Background::Color(
-                                Color::from_rgba(1.0, 1.0, 1.0, 0.06),
-                            )),
-                            text_color: t::TEXT_DIM,
-                            border: iced::Border { radius: 4.0.into(), ..Default::default() },
-                            ..Default::default()
-                        }),
-                ]
-                .align_y(iced::Alignment::Center),
-                text("").size(4),
-                exchange_row,
-                market_row,
-                text("").size(4),
-                sym_input,
-                text("").size(4),
-                text("Popular:").size(10).color(t::TEXT_DIM),
-                sym_grid,
-                text("").size(6),
-                action_row,
+        // ---- Dialog card — build column progressively ----
+        let mut card_col = column![
+            row![
+                text("Add Instrument").size(14).color(t::TEXT_BRIGHT),
+                container(text("")).width(Length::Fill),
+                button(text("×").size(13).color(t::TEXT_DIM))
+                    .on_press(Message::CancelEditCell)
+                    .padding([2, 7])
+                    .style(|_theme: &_, _status| button::Style {
+                        background: Some(iced::Background::Color(
+                            Color::from_rgba(1.0, 1.0, 1.0, 0.06),
+                        )),
+                        text_color: t::TEXT_DIM,
+                        border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                        ..Default::default()
+                    }),
             ]
-            .spacing(6)
-            .padding(20)
-            .width(Length::Fixed(440.0)),
-        )
-        .style(|_theme: &_| container::Style {
+            .align_y(iced::Alignment::Center),
+            text("").size(4),
+            exchange_row,
+            market_row,
+            text("").size(4),
+            sym_input,
+        ]
+        .spacing(6)
+        .padding(20)
+        .width(Length::Fixed(440.0));
+
+        if let Some(w) = warning {
+            card_col = card_col.push(w);
+        }
+        card_col = card_col.push(text("").size(2));
+        card_col = card_col.push(sym_list);
+        card_col = card_col.push(text("").size(6));
+        card_col = card_col.push(action_row);
+
+        let card = container(card_col).style(|_theme: &_| container::Style {
             background: Some(iced::Background::Color(Color::from_rgba(0.1, 0.1, 0.18, 0.97))),
             border: iced::Border {
                 radius: 8.0.into(),
@@ -810,6 +927,30 @@ impl App {
         .on_press(Message::CancelEditCell)
         .into()
     }
+}
+
+/// Async REST fetch of symbol list from backend `/symbols` endpoint.
+fn fetch_symbols_task(url: String) -> iced::Task<Message> {
+    iced::Task::perform(
+        async move {
+            let resp = reqwest::get(&url).await.map_err(|e| e.to_string())?;
+            if !resp.status().is_success() {
+                return Err(format!("HTTP {}", resp.status()));
+            }
+            let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+            let symbols: Vec<String> = data["symbols"]
+                .as_array()
+                .ok_or_else(|| "no symbols array in response".to_string())?
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            Ok::<Vec<String>, String>(symbols)
+        },
+        |result| match result {
+            Ok(symbols) => Message::SymbolsFetched(symbols),
+            Err(e) => Message::SymbolsFetchError(e),
+        },
+    )
 }
 
 fn help_overlay<'a>() -> Element<'a, Message> {

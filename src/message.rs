@@ -44,6 +44,64 @@ impl PanelId {
     }
 }
 
+/// Exchange selector in instrument picker
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exchange {
+    Bybit,
+    Binance,
+    OKX,
+    Gate,
+    BingX,
+}
+
+impl Exchange {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Exchange::Bybit => "bybit",
+            Exchange::Binance => "binance",
+            Exchange::OKX => "okx",
+            Exchange::Gate => "gate",
+            Exchange::BingX => "bingx",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Exchange::Bybit => "Bybit",
+            Exchange::Binance => "Binance",
+            Exchange::OKX => "OKX",
+            Exchange::Gate => "Gate",
+            Exchange::BingX => "BingX",
+        }
+    }
+}
+
+/// Market type selector in instrument picker
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarketType {
+    Linear,
+    Inverse,
+    Spot,
+}
+
+impl MarketType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MarketType::Linear => "linear",
+            MarketType::Inverse => "inverse",
+            MarketType::Spot => "spot",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            MarketType::Linear => "Linear",
+            MarketType::Inverse => "Inverse",
+            MarketType::Spot => "Spot",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     /// Routes to a specific panel inside a dashboard
@@ -65,6 +123,14 @@ pub enum Message {
     BeginEditCell { dash: usize, panel: usize },
     CancelEditCell,
     CellSymbolInput(String),
+
+    // Instrument picker — exchange / market type selectors
+    SetPickerExchange(Exchange),
+    SetPickerMarket(MarketType),
+
+    // Symbol list fetch results
+    SymbolsFetched(Vec<String>),
+    SymbolsFetchError(String),
 
     // Global mouse events (used for panel resize tracking)
     GlobalMouseMove(f32),

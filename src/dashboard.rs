@@ -24,19 +24,18 @@ impl Dashboard {
         }
     }
 
-    /// Set the grid dimensions, preserving existing panels where possible
+    /// Set the grid dimensions, preserving existing panels by flat index order.
+    /// Panels with index < new_n are kept; panels beyond new_n are dropped (their
+    /// subscriptions will be removed and WS connections will be closed by iced).
     pub fn resize_grid(&mut self, cols: usize, rows: usize) {
         let new_n = cols * rows;
+        let old_panels: Vec<Option<TradingPanel>> = self.panels.drain(..).collect();
         let mut new_panels: Vec<Option<TradingPanel>> = (0..new_n).map(|_| None).collect();
-        // Copy panels that fit in the new grid (row-major)
-        for row in 0..rows.min(self.rows) {
-            for col in 0..cols.min(self.cols) {
-                let old_idx = row * self.cols + col;
-                let new_idx = row * cols + col;
-                if old_idx < self.panels.len() {
-                    new_panels[new_idx] = self.panels[old_idx].take();
-                }
+        for (i, panel) in old_panels.into_iter().enumerate() {
+            if i < new_n {
+                new_panels[i] = panel;
             }
+            // panels beyond new_n are dropped here — iced stops their subscriptions
         }
         self.cols = cols;
         self.rows = rows;
