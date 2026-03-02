@@ -2,7 +2,7 @@ use iced::mouse;
 use iced::widget::canvas::{self, Canvas, Geometry, Path, Stroke, Text};
 use iced::{Element, Length, Point, Rectangle, Renderer, Size, Theme};
 
-use crate::message::Message;
+use crate::panel_message::PanelMessage;
 use crate::model::ClusterCandle;
 use crate::price_axis::PriceAxis;
 use crate::theme as t;
@@ -32,7 +32,7 @@ impl ClusterCanvas {
         self.cache.clear();
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view(&self) -> Element<'_, PanelMessage> {
         Canvas::new(self)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -40,7 +40,7 @@ impl ClusterCanvas {
     }
 }
 
-impl canvas::Program<Message> for &ClusterCanvas {
+impl canvas::Program<PanelMessage> for &ClusterCanvas {
     type State = ();
 
     fn draw(

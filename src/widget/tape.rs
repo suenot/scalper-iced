@@ -1,7 +1,7 @@
 use iced::widget::{column, container, row, scrollable, text, Column};
 use iced::{Element, Length};
 
-use crate::message::Message;
+use crate::panel_message::PanelMessage;
 use crate::model::TickCandle;
 use crate::theme as t;
 
@@ -22,7 +22,7 @@ impl Tape {
         self.ticks = ticks;
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view(&self) -> Element<'_, PanelMessage> {
         let header = row![
             text("Time").size(11).color(t::TEXT_DIM).width(Length::Fixed(70.0)),
             text("Price").size(11).color(t::TEXT_DIM).width(Length::Fixed(80.0)),
@@ -32,7 +32,7 @@ impl Tape {
         .spacing(4)
         .padding(4);
 
-        let entries: Vec<Element<Message>> = self
+        let entries: Vec<Element<PanelMessage>> = self
             .ticks
             .iter()
             .rev()

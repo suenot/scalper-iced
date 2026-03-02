@@ -1,7 +1,7 @@
 use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length};
 
-use crate::message::Message;
+use crate::panel_message::PanelMessage;
 use crate::theme as t;
 
 #[derive(Debug, Clone)]
@@ -36,7 +36,7 @@ impl Default for StubPosition {
     }
 }
 
-pub fn view(position: &StubPosition) -> Element<'_, Message> {
+pub fn view(position: &StubPosition) -> Element<'_, PanelMessage> {
     let side_text = match position.side {
         PositionSide::Long => text("LONG").color(t::BID_GREEN).size(12),
         PositionSide::Short => text("SHORT").color(t::ASK_RED).size(12),
@@ -70,10 +70,10 @@ pub fn view(position: &StubPosition) -> Element<'_, Message> {
             .spacing(4),
             row![
                 button(text("Close All").size(11))
-                    .on_press(Message::ClosePosition)
+                    .on_press(PanelMessage::ClosePosition)
                     .padding([2, 8]),
                 button(text("Cancel All").size(11))
-                    .on_press(Message::CancelAllOrders)
+                    .on_press(PanelMessage::CancelAllOrders)
                     .padding([2, 8]),
             ]
             .spacing(4),

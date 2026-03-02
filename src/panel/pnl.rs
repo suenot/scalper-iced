@@ -1,7 +1,7 @@
 use iced::widget::{column, container, row, text};
 use iced::{Element, Length};
 
-use crate::message::Message;
+use crate::panel_message::PanelMessage;
 use crate::theme as t;
 
 #[derive(Debug, Clone)]
@@ -27,7 +27,7 @@ impl Default for StubPnL {
     }
 }
 
-pub fn view(pnl: &StubPnL) -> Element<'_, Message> {
+pub fn view(pnl: &StubPnL) -> Element<'_, PanelMessage> {
     let total_color = if pnl.total_today >= 0.0 {
         t::BID_GREEN
     } else {

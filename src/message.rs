@@ -1,4 +1,4 @@
-use crate::ws::WsEvent;
+use crate::panel_message::PanelMessage;
 
 #[derive(Debug, Clone)]
 pub enum Side {
@@ -39,7 +39,6 @@ impl PanelId {
         ]
     }
 
-    /// Whether this panel goes in the main (center) row vs bottom bar
     pub fn is_main_panel(&self) -> bool {
         !matches!(self, PanelId::BottomBar)
     }
@@ -47,47 +46,27 @@ impl PanelId {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    // WebSocket
-    WsEvent(WsEvent),
+    /// Routes to a specific panel inside a dashboard
+    ForPanel { dash: usize, panel: usize, msg: PanelMessage },
 
-    // OrderBook interaction
-    OrderBookClicked { price: f64, side: Side },
-    Scroll(f32),
-    Zoom(f32),
-    ChangePriceStep(f32),
-    SnapToPrice,
+    /// Hotkey action routed to the currently active/focused panel
+    ActivePanelAction(PanelMessage),
 
-    // Trading (stubbed)
-    BuyMarket,
-    SellMarket,
-    ClosePosition,
-    CancelAllOrders,
-    EmergencyCloseAll,
+    // Dashboard / tab management
+    AddDashboard,
+    RemoveDashboard(usize),
+    SwitchDashboard(usize),
+    SetGridLayout { dash: usize, cols: usize, rows: usize },
 
-    // UI
-    ToggleFollowMode,
-    VolumeFilterChanged(f64),
-    TogglePanel(PanelId),
+    /// Set a symbol for a panel cell (creates/replaces TradingPanel)
+    SetPanelSymbol { dash: usize, panel: usize, symbol: String },
 
-    // Drag/drop panel reordering
-    DragStart(PanelId),
-    DragOver(PanelId),
-    DragEnd,
+    // Global mouse events (used for panel resize tracking)
+    GlobalMouseMove(f32),
+    GlobalMouseRelease,
 
-    // Panel resize (draggable dividers)
-    ResizeStart { divider_index: usize, x: f32 },
-    ResizeMove(f32),
-    ResizeEnd,
-
-    // Order panel
-    QuantityChanged(String),
-
-    // Help overlay
+    // Global UI
     ToggleHelp,
-
-    // FPS counter
     FpsTick,
-
-    // No-op (for unhandled hotkeys)
     NoOp,
 }

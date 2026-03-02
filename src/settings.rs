@@ -9,15 +9,30 @@ use crate::message::PanelId;
 const SETTINGS_FILE: &str = "settings.json";
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Settings {
+pub struct PanelConfig {
+    pub symbol: String,
+    pub price_step: f64,
     pub panel_order: Vec<String>,
     pub panel_visible: HashMap<String, bool>,
     pub panel_widths: HashMap<String, u16>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DashboardConfig {
+    pub name: String,
+    pub cols: usize,
+    pub rows: usize,
+    pub panels: Vec<Option<PanelConfig>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Settings {
+    pub dashboards: Vec<DashboardConfig>,
+    pub active_dashboard: usize,
+}
+
 impl Settings {
     fn settings_path() -> PathBuf {
-        // Store next to the executable, or in CWD
         let mut path = std::env::current_dir().unwrap_or_default();
         path.push(SETTINGS_FILE);
         path
@@ -31,25 +46,9 @@ impl Settings {
         Some(settings)
     }
 
-    pub fn save(
-        panel_order: &[PanelId],
-        panel_visible: &HashMap<PanelId, bool>,
-        panel_widths: &HashMap<PanelId, u16>,
-    ) {
-        let settings = Settings {
-            panel_order: panel_order.iter().map(|p| panel_id_to_str(*p)).collect(),
-            panel_visible: panel_visible
-                .iter()
-                .map(|(k, v)| (panel_id_to_str(*k), *v))
-                .collect(),
-            panel_widths: panel_widths
-                .iter()
-                .map(|(k, v)| (panel_id_to_str(*k), *v))
-                .collect(),
-        };
-
+    pub fn save(settings: &Settings) {
         let path = Self::settings_path();
-        match serde_json::to_string_pretty(&settings) {
+        match serde_json::to_string_pretty(settings) {
             Ok(json) => {
                 if let Err(e) = fs::write(&path, json) {
                     eprintln!("[settings] Failed to save: {}", e);
@@ -58,30 +57,9 @@ impl Settings {
             Err(e) => eprintln!("[settings] Failed to serialize: {}", e),
         }
     }
-
-    pub fn to_panel_order(&self) -> Vec<PanelId> {
-        self.panel_order
-            .iter()
-            .filter_map(|s| str_to_panel_id(s))
-            .collect()
-    }
-
-    pub fn to_panel_visible(&self) -> HashMap<PanelId, bool> {
-        self.panel_visible
-            .iter()
-            .filter_map(|(k, v)| str_to_panel_id(k).map(|id| (id, *v)))
-            .collect()
-    }
-
-    pub fn to_panel_widths(&self) -> HashMap<PanelId, u16> {
-        self.panel_widths
-            .iter()
-            .filter_map(|(k, v)| str_to_panel_id(k).map(|id| (id, *v)))
-            .collect()
-    }
 }
 
-fn panel_id_to_str(id: PanelId) -> String {
+pub fn panel_id_to_str(id: PanelId) -> String {
     match id {
         PanelId::ClusterChart => "cluster".into(),
         PanelId::TickChart => "tick".into(),
@@ -92,7 +70,7 @@ fn panel_id_to_str(id: PanelId) -> String {
     }
 }
 
-fn str_to_panel_id(s: &str) -> Option<PanelId> {
+pub fn str_to_panel_id(s: &str) -> Option<PanelId> {
     match s {
         "cluster" => Some(PanelId::ClusterChart),
         "tick" => Some(PanelId::TickChart),

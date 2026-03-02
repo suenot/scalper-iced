@@ -4,7 +4,8 @@ use iced::mouse;
 use iced::widget::canvas::{self, Action, Canvas, Geometry, Path, Stroke, Text};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 
-use crate::message::{Message, Side};
+use crate::message::Side;
+use crate::panel_message::PanelMessage;
 use crate::model::OrderBookSnapshot;
 use crate::price_axis::PriceAxis;
 use crate::theme as t;
@@ -40,7 +41,7 @@ impl OrderBookCanvas {
         self.cache.clear();
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view(&self) -> Element<'_, PanelMessage> {
         Canvas::new(self)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -48,7 +49,7 @@ impl OrderBookCanvas {
     }
 }
 
-impl canvas::Program<Message> for &OrderBookCanvas {
+impl canvas::Program<PanelMessage> for &OrderBookCanvas {
     type State = CanvasState;
 
     fn update(
@@ -57,7 +58,7 @@ impl canvas::Program<Message> for &OrderBookCanvas {
         event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> Option<Action<Message>> {
+    ) -> Option<Action<PanelMessage>> {
         match event {
             // Track modifier keys (Ctrl, Shift, etc.)
             Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) => {
@@ -69,7 +70,7 @@ impl canvas::Program<Message> for &OrderBookCanvas {
                     let mid = self.price_axis.center_price;
                     let side = if price > mid { Side::Sell } else { Side::Buy };
                     return Some(
-                        Action::publish(Message::OrderBookClicked { price, side })
+                        Action::publish(PanelMessage::OrderBookClicked { price, side })
                             .and_capture(),
                     );
                 }
@@ -82,13 +83,13 @@ impl canvas::Program<Message> for &OrderBookCanvas {
                 if cursor.is_over(bounds) {
                     if state.modifiers.control() {
                         // Ctrl+Scroll: change price step (grouping)
-                        return Some(Action::publish(Message::ChangePriceStep(dy)).and_capture());
+                        return Some(Action::publish(PanelMessage::ChangePriceStep(dy)).and_capture());
                     } else if state.modifiers.shift() {
                         // Shift+Scroll: zoom (change row height)
-                        return Some(Action::publish(Message::Zoom(dy)).and_capture());
+                        return Some(Action::publish(PanelMessage::Zoom(dy)).and_capture());
                     } else {
                         // Plain scroll: move price axis
-                        return Some(Action::publish(Message::Scroll(dy)).and_capture());
+                        return Some(Action::publish(PanelMessage::Scroll(dy)).and_capture());
                     }
                 }
             }

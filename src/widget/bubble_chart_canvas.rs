@@ -2,7 +2,7 @@ use iced::mouse;
 use iced::widget::canvas::{self, Canvas, Geometry, Path, Stroke, Text};
 use iced::{Element, Length, Point, Rectangle, Renderer, Theme};
 
-use crate::message::Message;
+use crate::panel_message::PanelMessage;
 use crate::model::TickCandle;
 use crate::price_axis::PriceAxis;
 use crate::theme as t;
@@ -34,7 +34,7 @@ impl BubbleChartCanvas {
         self.cache.clear();
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view(&self) -> Element<'_, PanelMessage> {
         Canvas::new(self)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -42,7 +42,7 @@ impl BubbleChartCanvas {
     }
 }
 
-impl canvas::Program<Message> for &BubbleChartCanvas {
+impl canvas::Program<PanelMessage> for &BubbleChartCanvas {
     type State = ();
 
     fn draw(

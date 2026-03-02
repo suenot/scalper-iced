@@ -1,11 +1,14 @@
 mod app;
+mod dashboard;
 mod hotkeys;
 mod message;
 mod model;
 mod panel;
+mod panel_message;
 mod price_axis;
 mod settings;
 mod theme;
+mod trading_panel;
 mod widget;
 mod ws;
 
@@ -20,11 +23,11 @@ struct Args {
     #[arg(long, default_value = "localhost:8080")]
     addr: String,
 
-    /// Trading symbol
+    /// Default trading symbol (used when no settings file exists)
     #[arg(long, default_value = "BTCUSDT")]
     symbol: String,
 
-    /// Price step for orderbook aggregation
+    /// Default price step for orderbook aggregation
     #[arg(long, default_value_t = 0.1)]
     price_step: f64,
 
@@ -44,21 +47,20 @@ fn theme_fn(_app: &App) -> iced::Theme {
 fn main() -> iced::Result {
     let args = Args::parse();
 
-    let ws_url = format!(
-        "ws://{}/ws?symbol={}&priceStep={}&clustersN={}&ticksN={}",
-        args.addr, args.symbol, args.price_step, args.clusters_n, args.ticks_n
-    );
-
+    let ws_base_url = format!("ws://{}", args.addr);
     let symbol = args.symbol.clone();
     let price_step = args.price_step;
+    let clusters_n = args.clusters_n;
+    let ticks_n = args.ticks_n;
 
     println!("Starting scalper terminal...");
-    println!("  WS URL: {}", ws_url);
-    println!("  Symbol: {}", symbol);
-    println!("  Price step: {}", price_step);
+    println!("  WS base: {}", ws_base_url);
+    println!("  Default symbol: {}", symbol);
+    println!("  Default price step: {}", price_step);
 
+    let ws_base = ws_base_url.clone();
     iced::application(
-        move || App::new(ws_url.clone(), symbol.clone(), price_step),
+        move || App::new(ws_base.clone(), symbol.clone(), price_step, clusters_n, ticks_n),
         App::update,
         App::view,
     )
