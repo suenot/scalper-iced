@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build aarch64
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Build x86_64
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Create universal binary
+        run: |
+          lipo -create \
+            target/aarch64-apple-darwin/release/marketmaker-iced \
+            target/x86_64-apple-darwin/release/marketmaker-iced \
+            -output marketmaker-scalper
+          zip marketmaker-scalper-macos.zip marketmaker-scalper
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: marketmaker-scalper-macos.zip
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libwayland-client0 \
+            libvulkan-dev libgl1-mesa-dev \
+            pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        run: zip marketmaker-scalper-linux-x86_64.zip target/release/marketmaker-iced
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: marketmaker-scalper-linux-x86_64.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        run: Compress-Archive -Path target/release/marketmaker-iced.exe -DestinationPath marketmaker-scalper-windows-x86_64.zip
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: marketmaker-scalper-windows-x86_64.zip
