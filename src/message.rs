@@ -132,8 +132,8 @@ pub enum Message {
     SymbolsFetched(Vec<String>),
     SymbolsFetchError(String),
 
-    // Global mouse events (used for panel resize tracking)
-    GlobalMouseMove(f32),
+    // Global mouse events (used for panel resize tracking and crosshair)
+    GlobalMouseMove(f32, f32),
     GlobalMouseRelease,
 
     // Global UI

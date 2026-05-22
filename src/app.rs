@@ -2,8 +2,9 @@ use std::time::Instant;
 
 use iced::event::Event;
 use iced::mouse;
+use iced::widget::canvas::{self, Frame, Path, Stroke};
 use iced::widget::{button, column, container, row, scrollable, stack, text, text_input, Column, Row};
-use iced::{Color, Element, Length, Subscription};
+use iced::{Color, Element, Length, Point, Rectangle, Renderer, Subscription, Theme};
 
 use crate::dashboard::{Dashboard, GRID_PRESETS};
 use crate::message::{Exchange, MarketType, Message};
@@ -32,6 +33,7 @@ pub struct App {
 
     // UI state
     show_help: bool,
+    crosshair_y: Option<f32>,
 
     // Instrument picker (for empty grid cells)
     editing_cell: Option<(usize, usize)>,
@@ -128,6 +130,7 @@ impl App {
             mps: 0,
             last_fps_instant: Instant::now(),
             show_help: false,
+            crosshair_y: None,
             editing_cell: None,
             cell_symbol_input: String::new(),
             picker_exchange: Exchange::Bybit,
@@ -260,8 +263,9 @@ impl App {
                 self.cell_symbol_input = text.to_uppercase();
             }
 
-            // Global mouse tracking for panel resize (listen_with can't capture vars)
-            Message::GlobalMouseMove(x) => {
+            // Global mouse tracking for panel resize and crosshair
+            Message::GlobalMouseMove(x, y) => {
+                self.crosshair_y = Some(y);
                 use crate::panel_message::PanelMessage;
                 for dashboard in &mut self.dashboards {
                     for tp in dashboard.panels.iter_mut().flatten() {
@@ -575,14 +579,23 @@ impl App {
             .width(Length::Fill)
             .height(Length::Fill);
 
+        let crosshair_layer: Element<'_, Message> = if let Some(y) = self.crosshair_y {
+            canvas::Canvas::new(CrosshairOverlay { y })
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            iced::widget::Space::new().width(Length::Fill).height(Length::Fill).into()
+        };
+
         if let Some((ed_dash, ed_panel)) = self.editing_cell {
             let picker = self.picker_overlay(ed_dash, ed_panel);
-            stack![base, picker].width(Length::Fill).height(Length::Fill).into()
+            stack![base, crosshair_layer, picker].width(Length::Fill).height(Length::Fill).into()
         } else if self.show_help {
             let help_ov = help_overlay();
-            stack![base, help_ov].width(Length::Fill).height(Length::Fill).into()
+            stack![base, crosshair_layer, help_ov].width(Length::Fill).height(Length::Fill).into()
         } else {
-            base.into()
+            stack![base, crosshair_layer].width(Length::Fill).height(Length::Fill).into()
         }
     }
 
@@ -596,23 +609,16 @@ impl App {
             iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::FpsTick),
         ];
 
-        // Global mouse events for panel resize (listen_with requires fn pointer, no capture)
-        let any_resizing = self
-            .dashboards
-            .iter()
-            .flat_map(|d| d.panels.iter().flatten())
-            .any(|p| p.resizing_divider.is_some());
-        if any_resizing {
-            subs.push(iced::event::listen_with(|event, _status, _id| match event {
-                Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                    Some(Message::GlobalMouseMove(position.x))
-                }
-                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                    Some(Message::GlobalMouseRelease)
-                }
-                _ => None,
-            }));
-        }
+        // Global mouse events — always active for crosshair; also handles panel resize
+        subs.push(iced::event::listen_with(|event, _status, _id| match event {
+            Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                Some(Message::GlobalMouseMove(position.x, position.y))
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                Some(Message::GlobalMouseRelease)
+            }
+            _ => None,
+        }));
 
         // Collect panel subscriptions (WS) from all panels
         for (di, dashboard) in self.dashboards.iter().enumerate() {
@@ -1043,4 +1049,38 @@ fn help_overlay<'a>() -> Element<'a, Message> {
     )
     .on_press(Message::ToggleHelp)
     .into()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Global crosshair overlay
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct CrosshairOverlay {
+    y: f32,
+}
+
+impl canvas::Program<Message> for CrosshairOverlay {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let line = Path::line(
+            Point::new(0.0, self.y),
+            Point::new(bounds.width, self.y),
+        );
+        frame.stroke(
+            &line,
+            Stroke::default()
+                .with_color(crate::theme::LAST_PRICE_LINE)
+                .with_width(1.0),
+        );
+        vec![frame.into_geometry()]
+    }
 }

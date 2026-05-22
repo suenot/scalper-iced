@@ -115,24 +115,6 @@ impl canvas::Program<PanelMessage> for &TickChartCanvas {
                 );
             }
 
-            // Last price line — offset by row_h/2 to match orderbook/cluster
-            let last_y = self
-                .price_axis
-                .price_to_y(self.price_axis.last_price, size.height);
-            let last_y_center = last_y + row_h / 2.0;
-            if last_y_center > 0.0 && last_y_center < size.height {
-                let line = Path::line(
-                    Point::new(0.0, last_y_center),
-                    Point::new(chart_width, last_y_center),
-                );
-                frame.stroke(
-                    &line,
-                    Stroke::default()
-                        .with_color(t::LAST_PRICE_LINE)
-                        .with_width(1.0),
-                );
-            }
-
             // Price scale labels on the right
             let visible_rows = self.price_axis.visible_rows(size.height);
             let step = (visible_rows / 8).max(1);

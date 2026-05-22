@@ -141,21 +141,6 @@ impl canvas::Program<PanelMessage> for &ClusterCanvas {
                 );
             }
 
-            let last_y = self
-                .price_axis
-                .price_to_y(self.price_axis.last_price, size.height);
-            if last_y > 0.0 && last_y < size.height {
-                let line = Path::line(
-                    Point::new(0.0, last_y + row_h / 2.0),
-                    Point::new(size.width, last_y + row_h / 2.0),
-                );
-                frame.stroke(
-                    &line,
-                    Stroke::default()
-                        .with_color(t::LAST_PRICE_LINE)
-                        .with_width(1.0),
-                );
-            }
         });
 
         vec![geometry]
