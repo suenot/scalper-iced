@@ -26,17 +26,63 @@ jobs:
       - name: Build x86_64
         run: cargo build --release --target x86_64-apple-darwin
 
-      - name: Create universal binary
+      - name: Create universal binary and .dmg
         run: |
+          # Universal binary
           lipo -create \
             target/aarch64-apple-darwin/release/marketmaker-iced \
             target/x86_64-apple-darwin/release/marketmaker-iced \
-            -output marketmaker-scalper
-          zip marketmaker-scalper-macos.zip marketmaker-scalper
+            -output marketmaker-iced-universal
+
+          # .app bundle
+          APP="MarketMaker Scalper.app"
+          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/Resources"
+          cp marketmaker-iced-universal "$APP/Contents/MacOS/marketmaker-iced"
+          cat > "$APP/Contents/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key>
+            <string>MarketMaker Scalper</string>
+            <key>CFBundleDisplayName</key>
+            <string>MarketMaker Scalper</string>
+            <key>CFBundleIdentifier</key>
+            <string>cc.marketmaker.scalper</string>
+            <key>CFBundleVersion</key>
+            <string>0.1.0</string>
+            <key>CFBundleShortVersionString</key>
+            <string>0.1.0</string>
+            <key>CFBundleExecutable</key>
+            <string>marketmaker-iced</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+            <key>NSSupportsAutomaticGraphicsSwitching</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          # DMG staging folder
+          mkdir dmg-staging
+          cp -r "$APP" dmg-staging/
+
+          # Create symlink to /Applications for drag-install
+          ln -s /Applications dmg-staging/Applications
+
+          # Build DMG
+          hdiutil create \
+            -volname "MarketMaker Scalper" \
+            -srcfolder dmg-staging \
+            -ov -format UDZO \
+            marketmaker-scalper-macos.dmg
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: marketmaker-scalper-macos.zip
+          files: marketmaker-scalper-macos.dmg
 
   build-linux:
     runs-on: ubuntu-latest
